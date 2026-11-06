@@ -23,6 +23,11 @@ defmodule CookingScheduler.Meal.Dish do
     field :ingredients_in, :boolean, default: false
     field :prepped, :boolean, default: false
 
+    # Live progress while cooking (set from the cook screen, not the planning form).
+    field :cook_started_at, :integer
+    field :cook_done_at, :integer
+    field :extra_minutes, :integer, default: 0
+
     timestamps(type: :utc_datetime)
   end
 

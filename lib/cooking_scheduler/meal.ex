@@ -25,6 +25,40 @@ defmodule CookingScheduler.Meal do
   def update_dish(%Dish{} = dish, attrs), do: dish |> Dish.changeset(attrs) |> Repo.update()
   def delete_dish(%Dish{} = dish), do: Repo.delete(dish)
 
+  # ---- live cooking progress (times are minutes after midnight) ----
+
+  def set_prepped(%Dish{} = d, value),
+    do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update()
+
+  def start_cooking(%Dish{} = d, at),
+    do: d |> Ecto.Changeset.change(cook_started_at: at) |> Repo.update()
+
+  def finish_cooking(%Dish{} = d, at),
+    do: d |> Ecto.Changeset.change(cook_done_at: at) |> Repo.update()
+
+  def undo_finish(%Dish{} = d), do: d |> Ecto.Changeset.change(cook_done_at: nil) |> Repo.update()
+
+  def undo_start(%Dish{} = d),
+    do: d |> Ecto.Changeset.change(cook_started_at: nil, cook_done_at: nil) |> Repo.update()
+
+  def add_extra(%Dish{} = d, minutes),
+    do:
+      d
+      |> Ecto.Changeset.change(extra_minutes: max(d.extra_minutes + minutes, 0))
+      |> Repo.update()
+
+  @doc "Clears started/finished/extra-time on every dish (keeps your plan and prepped ticks)."
+  def reset_cooking do
+    Repo.update_all(Dish, set: [cook_started_at: nil, cook_done_at: nil, extra_minutes: 0])
+    :ok
+  end
+
+  @doc "Moves dinner to the given minutes after midnight."
+  def set_serve_minutes(%Plan{} = plan, minutes) do
+    minutes = minutes |> max(0) |> min(1439)
+    update_plan(plan, %{serve_at: Time.new!(div(minutes, 60), rem(minutes, 60), 0)})
+  end
+
   @doc "Adds a dish with sensible defaults for how it's cooked, ready to edit in place."
   def add_dish(:oven, kitchen) do
     unit = kitchen |> Enum.find(&(&1.kind == :oven)) |> then(&((&1 && &1.temp_unit) || :gas_mark))

@@ -61,7 +61,7 @@ defmodule CookingScheduler.Planner do
 
   defp timeline(%Dish{} = d, serve) do
     out = serve - d.rest_minutes
-    cook = out - (d.cook_minutes + d.buffer_minutes)
+    cook = out - total_minutes(d)
 
     %Entry{dish: d, serve_at: serve, out_at: out, cook_at: cook, prep_at: cook - d.prep_minutes}
   end
@@ -70,7 +70,10 @@ defmodule CookingScheduler.Planner do
     m in [:oven, :appliance] and id != nil and Map.has_key?(by_id, id)
   end
 
-  defp uses_equipment?(%Entry{dish: d}), do: d.cook_minutes + d.buffer_minutes > 0
+  defp uses_equipment?(%Entry{dish: d}), do: total_minutes(d) > 0
+
+  @doc "Time on the heat: cooking + buffer + any extra added on the day."
+  def total_minutes(%Dish{} = d), do: d.cook_minutes + d.buffer_minutes + d.extra_minutes
 
   # ---- assignment -----------------------------------------------------------
 
