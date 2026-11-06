@@ -31,6 +31,8 @@ defmodule CookingSchedulerWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
+  attr :wide, :boolean, default: false, doc: "use the wider layout (dense screens)"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -42,17 +44,27 @@ defmodule CookingSchedulerWeb.Layouts do
       </div>
       <div class="pointer-events-none absolute -right-32 top-40 size-96 rounded-full bg-secondary/15 blur-3xl">
       </div>
-      <header class="relative mx-auto flex max-w-4xl items-center justify-between px-4 py-5 sm:px-6">
+      <header class={[
+        "relative mx-auto flex items-center justify-between px-4 py-5 sm:px-6",
+        (@wide && "max-w-6xl") || "max-w-4xl"
+      ]}>
         <a href="/" class="flex items-center gap-2.5">
           <span class="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30">
             <.icon name="hero-fire-solid" class="size-5" />
           </span>
           <span class="text-base font-semibold tracking-tight">Cooking Scheduler</span>
         </a>
-        <.theme_toggle />
+        <div class="flex items-center gap-2 sm:gap-4">
+          <nav class="hidden items-center gap-1 text-sm font-medium sm:flex">
+            <.link navigate={~p"/"} class="btn btn-ghost btn-sm rounded-full">Home</.link>
+            <.link navigate={~p"/setup"} class="btn btn-ghost btn-sm rounded-full">Kitchen</.link>
+            <.link navigate={~p"/dishes"} class="btn btn-ghost btn-sm rounded-full">Dishes</.link>
+          </nav>
+          <.theme_toggle />
+        </div>
       </header>
 
-      <main class="relative mx-auto max-w-4xl px-4 pb-24 pt-6 sm:px-6">
+      <main class={["relative mx-auto px-4 pb-24 pt-6 sm:px-6", (@wide && "max-w-6xl") || "max-w-4xl"]}>
         {render_slot(@inner_block)}
       </main>
     </div>

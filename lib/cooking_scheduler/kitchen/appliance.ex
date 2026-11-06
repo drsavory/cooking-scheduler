@@ -40,6 +40,41 @@ defmodule CookingScheduler.Kitchen.Appliance do
   def fmt_temp(n, _unit) when is_float(n) and n == trunc(n), do: Integer.to_string(trunc(n))
   def fmt_temp(n, _unit), do: to_string(n)
 
+  # Standard gas mark -> °C table; fractions in between are interpolated.
+  @gas_marks [
+    {0.25, 110},
+    {0.5, 120},
+    {1, 140},
+    {2, 150},
+    {3, 170},
+    {4, 180},
+    {5, 190},
+    {6, 200},
+    {7, 220},
+    {8, 230},
+    {9, 240},
+    {10, 260}
+  ]
+
+  @doc "Converts a setting on any scale to degrees Celsius so ovens and dishes can be compared."
+  def to_celsius(temp, :celsius), do: temp * 1.0
+  def to_celsius(temp, :fahrenheit), do: (temp - 32) * 5 / 9
+
+  def to_celsius(temp, :gas_mark) do
+    {lo_gm, lo_c} =
+      @gas_marks |> Enum.take_while(fn {gm, _} -> gm <= temp end) |> List.last() || hd(@gas_marks)
+
+    case Enum.find(@gas_marks, fn {gm, _} -> gm > temp end) do
+      nil -> lo_c * 1.0
+      {hi_gm, hi_c} -> lo_c + (hi_c - lo_c) * (temp - lo_gm) / (hi_gm - lo_gm)
+    end
+  end
+
+  @doc "An oven's {lowest, highest} setting in °C."
+  def range_celsius(%__MODULE__{} = oven) do
+    {to_celsius(oven.min_temp || 0.0, oven.temp_unit), to_celsius(oven.max_temp, oven.temp_unit)}
+  end
+
   @doc "Top of the scale used when drawing a temperature range bar."
   def scale_top(:celsius), do: 300
   def scale_top(:fahrenheit), do: 575

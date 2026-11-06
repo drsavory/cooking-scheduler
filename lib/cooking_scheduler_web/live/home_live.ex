@@ -92,13 +92,22 @@ defmodule CookingSchedulerWeb.HomeLive do
               Next up: add your dishes and we'll work out what goes where, and when.
             </p>
           </div>
-          <.link
-            id="edit-kitchen"
-            navigate={~p"/setup"}
-            class="btn rounded-full border-0 bg-white/20 text-primary-content backdrop-blur hover:bg-white/30"
-          >
-            <.icon name="hero-pencil-square" class="size-4" /> Edit kitchen
-          </.link>
+          <div class="flex flex-wrap gap-2">
+            <.link
+              id="plan-dishes"
+              navigate={~p"/dishes"}
+              class="btn rounded-full border-0 bg-white text-primary shadow-lg hover:bg-white/90"
+            >
+              <.icon name="hero-clock" class="size-4" /> Plan dishes
+            </.link>
+            <.link
+              id="edit-kitchen"
+              navigate={~p"/setup"}
+              class="btn rounded-full border-0 bg-white/20 text-primary-content backdrop-blur hover:bg-white/30"
+            >
+              <.icon name="hero-pencil-square" class="size-4" /> Edit kitchen
+            </.link>
+          </div>
         </div>
 
         <div class="relative mt-8 flex gap-10 border-t border-white/20 pt-6">

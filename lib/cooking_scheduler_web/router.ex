@@ -19,6 +19,7 @@ defmodule CookingSchedulerWeb.Router do
 
     live "/", HomeLive
     live "/setup", SetupLive
+    live "/dishes", DishesLive
   end
 
   # Other scopes may use custom stacks.
