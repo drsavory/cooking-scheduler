@@ -159,4 +159,41 @@ defmodule CookingScheduler.PlannerTest do
     assert_in_delta Appliance.to_celsius(4.5, :gas_mark), 185.0, 0.001
     assert_in_delta Appliance.to_celsius(350, :fahrenheit), 176.67, 0.01
   end
+
+  describe "load/2" do
+    test "adds up oven space where dishes overlap" do
+      kitchen = [oven(1, "Oven")]
+      a = dish(1, cook_minutes: 120, oven_share: :half)
+      b = dish(2, cook_minutes: 60, oven_share: :third)
+
+      [row] = kitchen |> then(&Planner.plan([a, b], @serve, &1)) |> Planner.load(kitchen)
+
+      assert row.capacity == 12
+      assert row.peak == 10
+      assert Enum.map(row.segments, & &1.used) == [6, 10]
+    end
+
+    test "a longer rest frees the oven sooner" do
+      kitchen = [oven(1, "Oven")]
+      long = dish(1, cook_minutes: 60, oven_share: :full)
+
+      [tight] = Planner.load(Planner.plan([long], @serve, kitchen), kitchen)
+
+      [rested] =
+        Planner.load(Planner.plan([%{long | rest_minutes: 30}], @serve, kitchen), kitchen)
+
+      assert List.last(tight.segments).to == @serve
+      assert List.last(rested.segments).to == @serve - 30
+    end
+
+    test "rings and appliances hold one thing at a time; idle appliances are left out" do
+      kitchen = [oven(1, "Oven"), ring(2, :large)]
+      hob = dish(1, method: :ring, ring_size: :large)
+
+      assert [row] = Planner.load(Planner.plan([hob], @serve, kitchen), kitchen)
+      assert row.appliance.id == 2
+      assert row.capacity == 1
+      assert row.peak == 1
+    end
+  end
 end

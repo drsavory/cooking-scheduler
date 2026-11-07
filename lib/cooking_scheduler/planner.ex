@@ -59,6 +59,40 @@ defmodule CookingScheduler.Planner do
     Enum.sort_by(entries, &{&1.prep_at, &1.cook_at, &1.dish.name})
   end
 
+  @doc """
+  How busy each appliance is over time, from planned entries.
+
+  Returns one map per appliance that has something in it, in kitchen order:
+  `%{appliance, capacity, peak, segments}`. Segments are consecutive stretches
+  with constant load: `%{from, to, used, dishes}`. Ovens are measured in
+  `Dish.oven_units/1` against `Dish.oven_capacity/0`; rings and other
+  appliances hold one thing at a time (capacity 1).
+  """
+  def load(entries, kitchen) do
+    placed = Enum.filter(entries, &(&1.resource && uses_equipment?(&1)))
+
+    for app <- kitchen,
+        mine = Enum.filter(placed, &(&1.resource.id == app.id)),
+        mine != [] do
+      capacity = if app.kind == :oven, do: Dish.oven_capacity(), else: 1
+      weight = fn e -> if app.kind == :oven, do: Dish.oven_units(e.dish.oven_share), else: 1 end
+
+      points = mine |> Enum.flat_map(&[&1.cook_at, &1.out_at]) |> Enum.uniq() |> Enum.sort()
+
+      segments =
+        points
+        |> Enum.zip(Enum.drop(points, 1))
+        |> Enum.map(fn {from, to} ->
+          in_use = Enum.filter(mine, &(&1.cook_at <= from and &1.out_at >= to))
+          %{from: from, to: to, used: Enum.sum(Enum.map(in_use, weight)), dishes: in_use}
+        end)
+        |> Enum.reject(&(&1.dishes == []))
+
+      peak = segments |> Enum.map(& &1.used) |> Enum.max(fn -> 0 end)
+      %{appliance: app, capacity: capacity, peak: peak, segments: segments}
+    end
+  end
+
   defp timeline(%Dish{} = d, serve) do
     out = serve - d.rest_minutes
     cook = out - total_minutes(d)

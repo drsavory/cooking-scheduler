@@ -120,4 +120,13 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     {:ok, lv, _} = live(conn, path)
     assert has_element?(lv, ~s|#cook-meal[href="/meals/#{meal.id}/cook"]|)
   end
+
+  test "shows how busy each appliance is", %{conn: conn, path: path} do
+    {:ok, lv, _} = live(conn, path)
+    refute has_element?(lv, "#kitchen-load")
+
+    lv |> element("#start-from-last-year") |> render_click()
+    assert has_element?(lv, "#kitchen-load")
+    assert has_element?(lv, ~s|#kitchen-load [id^="load-"]|)
+  end
 end

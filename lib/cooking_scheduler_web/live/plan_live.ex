@@ -20,12 +20,21 @@ defmodule CookingSchedulerWeb.PlanLive do
     |> assign(:kitchen, kitchen)
     |> assign(:meal, meal)
     |> assign(:meal_form, to_form(Meals.change_meal(meal), id: "meal"))
-    |> assign(:entries, Planner.plan(dishes, Meal.serve_minutes(meal), kitchen))
+    |> assign_plan(dishes, Meal.serve_minutes(meal), kitchen)
     |> assign(:saved, Meals.saved_dishes_not_in(meal))
     |> assign(
       :other_meals,
       for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
     )
+  end
+
+  defp assign_plan(socket, dishes, serve, kitchen) do
+    entries = Planner.plan(dishes, serve, kitchen)
+
+    socket
+    |> assign(:entries, entries)
+    |> assign(:load, Planner.load(entries, kitchen))
+    |> assign(:serve, serve)
   end
 
   @impl true
@@ -106,6 +115,172 @@ defmodule CookingSchedulerWeb.PlanLive do
   defp method_label(:oven), do: "Oven"
   defp method_label(:ring), do: "Hob"
   defp method_label(:appliance), do: "Appliance"
+
+  # ---- kitchen load ---------------------------------------------------------
+
+  attr :load, :list, required: true
+  attr :serve, :integer, required: true
+
+  # One strip per appliance: bar height is how full it is, across the cooking window.
+  defp kitchen_load(assigns) do
+    start =
+      assigns.load
+      |> Enum.flat_map(& &1.segments)
+      |> Enum.map(& &1.from)
+      |> Enum.min()
+      |> div(60)
+      |> Kernel.*(60)
+
+    span = max(assigns.serve - start, 1)
+    hours = for t <- Range.new(div(start, 60) * 60 + 60, assigns.serve, 60), do: t
+
+    assigns = assign(assigns, start: start, span: span, hours: hours)
+
+    ~H"""
+    <section
+      id="kitchen-load"
+      class="pop-in mt-5 rounded-2xl border border-base-300 bg-base-100/90 p-4 shadow-sm backdrop-blur"
+    >
+      <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-4">
+        <h2 class="text-sm font-semibold">Kitchen load</h2>
+        <p class="text-xs text-base-content/60">
+          How full each appliance is until serving. Gaps are free space; a longer rest frees the oven sooner.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-[minmax(6rem,9rem)_1fr] items-center gap-x-3 gap-y-2">
+        <div></div>
+        <div class="relative h-4 text-[10px] tabular-nums text-base-content/50">
+          <span
+            :for={t <- @hours}
+            class="absolute -translate-x-1/2"
+            style={"left: #{pct(t - @start, @span)}%"}
+          >
+            {Duration.clock(Integer.mod(t, 1440))}
+          </span>
+        </div>
+
+        <%= for row <- @load do %>
+          <div class="min-w-0">
+            <div class="truncate text-sm font-medium">{row.appliance.name}</div>
+            <div class={["text-xs", load_text(row)]}>{load_summary(row)}</div>
+          </div>
+          <div
+            id={"load-#{row.appliance.id}"}
+            class="relative h-10 rounded-lg bg-base-200"
+          >
+            <span
+              :for={t <- @hours}
+              class="absolute inset-y-0 w-px bg-base-300"
+              style={"left: #{pct(t - @start, @span)}%"}
+            ></span>
+            <div
+              :for={seg <- row.segments}
+              tabindex="0"
+              class="group absolute inset-y-0 outline-none hover:z-20 focus:z-20"
+              style={"left: #{pct(seg.from - @start, @span)}%; width: #{pct(seg.to - seg.from, @span)}%"}
+            >
+              <div
+                class={[
+                  "absolute inset-x-0 bottom-0 rounded-sm transition group-hover:brightness-95 group-focus:brightness-95",
+                  load_color(row, seg)
+                ]}
+                style={"height: #{height(seg, row)}%"}
+              >
+              </div>
+              <div
+                role="tooltip"
+                class={[
+                  "pointer-events-none invisible absolute bottom-full z-30 mb-2 w-max max-w-64 translate-y-1 rounded-xl border border-base-300 bg-base-100 p-3 text-left opacity-0 shadow-xl shadow-base-content/10 transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus:visible group-focus:translate-y-0 group-focus:opacity-100",
+                  tip_align(seg, @start, @span)
+                ]}
+              >
+                <div class="text-xs font-semibold tabular-nums text-base-content/60">
+                  {Duration.clock(Integer.mod(seg.from, 1440))} – {Duration.clock(
+                    Integer.mod(seg.to, 1440)
+                  )}
+                </div>
+                <ul class="mt-1.5 space-y-1">
+                  <li
+                    :for={e <- seg.dishes}
+                    class="flex items-baseline justify-between gap-4 text-sm"
+                  >
+                    <span class="font-medium">{e.dish.name}</span>
+                    <span :if={row.capacity > 1} class="text-xs text-base-content/50">
+                      {share_label(e.dish.oven_share)}
+                    </span>
+                  </li>
+                </ul>
+                <div :if={row.capacity > 1} class="mt-2 border-t border-base-300 pt-1.5 text-xs">
+                  <span class={load_text(%{row | peak: seg.used})}>
+                    {seg.used}/{row.capacity} twelfths · {round(seg.used / row.capacity * 100)}% full
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    </section>
+    """
+  end
+
+  defp pct(minutes, span), do: Float.round(minutes / span * 100, 2)
+
+  defp height(seg, row), do: min(round(seg.used / row.capacity * 100), 100) |> max(12)
+
+  defp ratio(seg, row), do: seg.used / row.capacity
+
+  defp load_color(%{capacity: 1}, _seg), do: "bg-info/60"
+
+  defp load_color(row, seg) do
+    r = ratio(seg, row)
+
+    cond do
+      r > 1 -> "bg-error"
+      r == 1 -> "bg-warning"
+      r >= 0.75 -> "bg-warning/50"
+      true -> "bg-success/60"
+    end
+  end
+
+  defp load_summary(%{capacity: 1} = row) do
+    "#{length(row.segments)} #{if length(row.segments) == 1, do: "stretch", else: "stretches"} in use"
+  end
+
+  defp load_summary(row) do
+    cond do
+      row.peak > row.capacity -> "Over capacity"
+      row.peak == row.capacity -> "Full at peak"
+      true -> "Peak #{round(row.peak / row.capacity * 100)}% full"
+    end
+  end
+
+  defp load_text(%{capacity: 1}), do: "text-base-content/60"
+
+  defp load_text(row) do
+    cond do
+      row.peak > row.capacity -> "font-semibold text-error"
+      row.peak == row.capacity -> "font-semibold text-warning"
+      row.peak * 4 >= row.capacity * 3 -> "text-warning"
+      true -> "text-base-content/60"
+    end
+  end
+
+  defp share_label(share) do
+    Enum.find_value(Dish.oven_share_options(), "", fn {l, v} -> v == (share || :third) && l end)
+  end
+
+  # Keep tooltips on screen: anchor to the left/right edge near the ends of the strip.
+  defp tip_align(seg, start, span) do
+    mid = (seg.from + seg.to) / 2 - start
+
+    cond do
+      mid / span < 0.25 -> "left-0"
+      mid / span > 0.75 -> "right-0"
+      true -> "left-1/2 -translate-x-1/2"
+    end
+  end
 
   # ---- components -----------------------------------------------------------
 
@@ -270,12 +445,6 @@ defmodule CookingSchedulerWeb.PlanLive do
                   @form[:name].errors != [] && "input-error"
                 ]}
               />
-              <span :if={@dish.ingredients_in} class="text-success" title="All ingredients in">
-                <.icon name="hero-shopping-bag-micro" class="size-4" />
-              </span>
-              <span :if={@dish.prepped} class="text-success" title="Prepped">
-                <.icon name="hero-check-circle-micro" class="size-4" />
-              </span>
               <.link
                 id={"view-dish-#{@dish.id}"}
                 navigate={~p"/meals/#{@dish.meal_id}/dishes/#{@dish.id}"}
@@ -549,6 +718,8 @@ defmodule CookingSchedulerWeb.PlanLive do
           </button>
         </div>
       </div>
+
+      <.kitchen_load :if={@load != []} load={@load} serve={@serve} />
 
       <ul :if={@entries != []} id="dishes" class="mt-5 grid gap-2.5">
         <.dish_card
