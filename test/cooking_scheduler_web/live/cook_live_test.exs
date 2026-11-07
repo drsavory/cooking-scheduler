@@ -187,6 +187,6 @@ defmodule CookingSchedulerWeb.CookLiveTest do
 
     confirm_dialog(lv, "finish-cooking")
     assert_redirect(lv, ~p"/")
-    assert [%{status: :cooked}] = Meals.list_meal_summaries()
+    assert [%{status: :complete}] = Meals.list_meal_summaries()
   end
 end

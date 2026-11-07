@@ -65,7 +65,7 @@ defmodule CookingScheduler.MealsTest do
       {:ok, b} =
         Meals.create_dish(m, dish_attrs(%{name: "Gravy", prep_minutes: 5, rest_minutes: 0}))
 
-      assert [%{dishes: 2, prep_minutes: 15, status: :planned, delay: nil}] =
+      assert [%{dishes: 2, prep_minutes: 15, status: :planning, delay: nil}] =
                Meals.list_meal_summaries()
 
       {:ok, a} = Meals.start_cooking(a, 600)
@@ -76,7 +76,7 @@ defmodule CookingScheduler.MealsTest do
       {:ok, b} = Meals.start_cooking(b, 700)
       {:ok, _} = Meals.finish_cooking(b, 800)
 
-      assert [%{status: :cooked, delay: 20}] = Meals.list_meal_summaries()
+      assert [%{status: :complete, delay: 20}] = Meals.list_meal_summaries()
     end
 
     test "finishing early marks the meal cooked, ignoring dishes that were skipped" do
@@ -90,18 +90,32 @@ defmodule CookingScheduler.MealsTest do
       assert [%{status: :cooking}] = Meals.list_meal_summaries()
 
       {:ok, _} = Meals.finish_meal(Meals.get_meal!(m.id))
-      assert [%{status: :cooked, delay: 10}] = Meals.list_meal_summaries()
+      assert [%{status: :complete, delay: 10}] = Meals.list_meal_summaries()
     end
 
-    test "resetting takes a cooked or finished meal back to planned" do
+    test "resetting takes a cooked or finished meal back to prepping" do
       m = meal("Dinner", ~D[2026-12-25])
       {:ok, a} = Meals.create_dish(m, dish_attrs())
       {:ok, _} = Meals.start_cooking(a, 600)
       {:ok, _} = Meals.finish_meal(m)
 
       :ok = Meals.reset_cooking(Meals.get_meal!(m.id))
-      assert [%{status: :planned, delay: nil}] = Meals.list_meal_summaries()
+      assert [%{status: :prepping, delay: nil}] = Meals.list_meal_summaries()
       assert Meals.get_meal!(m.id).finished_at == nil
+    end
+
+    test "planning moves to prepping by choice, then cooking once a dish starts" do
+      m = meal("Dinner", ~D[2026-12-25])
+      {:ok, a} = Meals.create_dish(m, dish_attrs())
+
+      {:ok, _} = Meals.set_prep_status(m, :prepping)
+      assert [%{status: :prepping}] = Meals.list_meal_summaries()
+
+      {:ok, a} = Meals.start_cooking(a, 600)
+      assert [%{status: :cooking}] = Meals.list_meal_summaries()
+
+      {:ok, _} = Meals.undo_start(a)
+      assert [%{status: :prepping}] = Meals.list_meal_summaries()
     end
 
     test "each meal is independent, even with the same dishes" do
@@ -114,7 +128,7 @@ defmodule CookingScheduler.MealsTest do
 
       statuses = Map.new(Meals.list_meal_summaries(), &{&1.meal.id, &1.status})
       assert statuses[a.id] == :cooking
-      assert statuses[b.id] == :planned
+      assert statuses[b.id] == :planning
     end
   end
 

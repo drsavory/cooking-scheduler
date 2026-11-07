@@ -46,6 +46,12 @@ defmodule CookingSchedulerWeb.HomeLive do
     {:noreply, load_meals(socket)}
   end
 
+  def handle_event("set_meal_status", %{"id" => id, "status" => status}, socket)
+      when status in ["planning", "prepping"] do
+    {:ok, _} = id |> Meals.get_meal!() |> Meals.set_prep_status(String.to_existing_atom(status))
+    {:noreply, load_meals(socket)}
+  end
+
   def handle_event("reset_meal", %{"id" => id}, socket) do
     :ok = id |> Meals.get_meal!() |> Meals.reset_cooking()
     {:noreply, load_meals(socket)}
@@ -77,10 +83,11 @@ defmodule CookingSchedulerWeb.HomeLive do
   defp status_pill(assigns) do
     {label, tone} =
       case {assigns.status, assigns.delay} do
-        {:planned, _} -> {"Planned", "text-base-content/70 bg-base-content/10"}
+        {:planning, _} -> {"Planning", "text-base-content/70 bg-base-content/10"}
+        {:prepping, _} -> {"Prepping", "text-info-content bg-info"}
         {:cooking, _} -> {"Cooking now", "text-warning-content bg-warning"}
-        {:cooked, 0} -> {"On time", "text-success-content bg-success"}
-        {:cooked, d} -> {"#{Duration.format(d)} late", "text-warning-content bg-warning"}
+        {:complete, 0} -> {"Complete · on time", "text-success-content bg-success"}
+        {:complete, d} -> {"#{Duration.format(d)} late", "text-warning-content bg-warning"}
       end
 
     assigns = assign(assigns, label: label, tone: tone)
@@ -222,7 +229,26 @@ defmodule CookingSchedulerWeb.HomeLive do
               />
             </div>
 
-            <div :if={s.status != :planned} class="mt-4 flex gap-2 text-sm">
+            <div :if={s.status in [:planning, :prepping]} class="mt-4 flex gap-2 text-sm">
+              <button
+                :if={s.status == :planning}
+                id={"start-prepping-#{s.meal.id}"}
+                phx-click={JS.push("set_meal_status", value: %{id: s.meal.id, status: "prepping"})}
+                class="btn btn-xs btn-ghost rounded-full"
+              >
+                <.icon name="hero-shopping-bag-micro" class="size-3.5" /> Start prepping
+              </button>
+              <button
+                :if={s.status == :prepping}
+                id={"back-to-planning-#{s.meal.id}"}
+                phx-click={JS.push("set_meal_status", value: %{id: s.meal.id, status: "planning"})}
+                class="btn btn-xs btn-ghost rounded-full"
+              >
+                <.icon name="hero-arrow-uturn-left-micro" class="size-3.5" /> Back to planning
+              </button>
+            </div>
+
+            <div :if={s.status in [:cooking, :complete]} class="mt-4 flex gap-2 text-sm">
               <.confirm_button
                 :if={s.status == :cooking}
                 id={"finish-meal-#{s.meal.id}"}

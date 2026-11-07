@@ -86,12 +86,25 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
       confirm_dialog(lv, "finish-meal-#{m.id}")
       refute has_element?(lv, "#finish-meal-#{m.id}")
-      assert has_element?(lv, "#meal-#{m.id}", "On time")
+      assert has_element?(lv, "#meal-#{m.id}", "Complete")
 
       confirm_dialog(lv, "reset-meal-#{m.id}")
       refute has_element?(lv, "#reset-meal-#{m.id}")
-      assert has_element?(lv, "#meal-#{m.id}", "Planned")
+      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
       assert Meals.get_dish!(d.id).cook_started_at == nil
+    end
+
+    test "a planning meal can be moved to prepping and back", %{conn: conn} do
+      {:ok, m} = Meals.create_meal(%{name: "Dinner"})
+      {:ok, lv, _} = live(conn, ~p"/")
+      assert has_element?(lv, "#meal-#{m.id}", "Planning")
+
+      lv |> element("#start-prepping-#{m.id}") |> render_click()
+      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
+      assert Meals.get_meal!(m.id).status == :prepping
+
+      lv |> element("#back-to-planning-#{m.id}") |> render_click()
+      assert Meals.get_meal!(m.id).status == :planning
     end
 
     test "lists dishes and can delete one", %{conn: conn} do

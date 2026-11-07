@@ -7,6 +7,11 @@ defmodule CookingScheduler.Meals.Meal do
     field :name, :string
     field :date, :date
     field :serve_at, :time
+    # planning -> prepping is chosen by the cook; cooking/complete follow cooking progress.
+    field :status, Ecto.Enum,
+      values: [:planning, :prepping, :cooking, :complete],
+      default: :planning
+
     # Set (not cast) when the cook ends the meal early.
     field :finished_at, :utc_datetime
 

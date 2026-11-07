@@ -21,9 +21,10 @@ defmodule CookingScheduler.Meals do
   Every meal, most recent first, with what the home page shows about each:
   `%{meal:, dishes:, prep_minutes:, status:, delay:}`.
 
-  `status` is `:planned` (nothing started), `:cooking`, or `:cooked` (every timed dish is
-  done, or the meal was finished early with `finish_meal/1`). `delay` is how many minutes after the serving time dinner was actually ready (0 if on
-  time), and nil until the meal is cooked.
+  `status` is the meal's stored status: `:planning`, `:prepping` (planned, getting ingredients
+  in), `:cooking` or `:complete` (every timed dish is done, or the meal was finished early with
+  `finish_meal/1`). `delay` is how many minutes after the serving time dinner was actually
+  ready (0 if on time), and nil until the meal is complete.
   """
   def list_meal_summaries do
     dishes = Repo.all(from(d in Dish)) |> Enum.group_by(& &1.meal_id)
@@ -35,18 +36,9 @@ defmodule CookingScheduler.Meals do
 
   def summarize(%Meal{} = meal, dishes) do
     timed = Enum.filter(dishes, &(&1.cook_minutes + &1.buffer_minutes > 0))
-    started = Enum.filter(timed, &(&1.cook_started_at || &1.cook_done_at))
-
-    status =
-      cond do
-        started == [] -> :planned
-        meal.finished_at || Enum.all?(timed, & &1.cook_done_at) -> :cooked
-        true -> :cooking
-      end
-
     # Dishes skipped when a meal is finished early don't count towards the delay.
     delay =
-      if status == :cooked do
+      if meal.status == :complete do
         ready =
           for d <- timed, d.cook_done_at, do: d.cook_done_at + d.rest_minutes
 
@@ -57,7 +49,7 @@ defmodule CookingScheduler.Meals do
       meal: meal,
       dishes: length(dishes),
       prep_minutes: dishes |> Enum.map(& &1.prep_minutes) |> Enum.sum(),
-      status: status,
+      status: meal.status,
       delay: delay
     }
   end
@@ -181,15 +173,48 @@ defmodule CookingScheduler.Meals do
     do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update()
 
   def start_cooking(%Dish{} = d, at),
-    do: d |> Ecto.Changeset.change(cook_started_at: at) |> Repo.update()
+    do: d |> Ecto.Changeset.change(cook_started_at: at) |> update_progress()
 
   def finish_cooking(%Dish{} = d, at),
-    do: d |> Ecto.Changeset.change(cook_done_at: at) |> Repo.update()
+    do: d |> Ecto.Changeset.change(cook_done_at: at) |> update_progress()
 
-  def undo_finish(%Dish{} = d), do: d |> Ecto.Changeset.change(cook_done_at: nil) |> Repo.update()
+  def undo_finish(%Dish{} = d),
+    do: d |> Ecto.Changeset.change(cook_done_at: nil) |> update_progress()
 
   def undo_start(%Dish{} = d),
-    do: d |> Ecto.Changeset.change(cook_started_at: nil, cook_done_at: nil) |> Repo.update()
+    do: d |> Ecto.Changeset.change(cook_started_at: nil, cook_done_at: nil) |> update_progress()
+
+  defp update_progress(changeset) do
+    with {:ok, dish} <- Repo.update(changeset) do
+      sync_status(dish.meal_id)
+      {:ok, dish}
+    end
+  end
+
+  @doc "Moves a planning meal on to prepping (or back again)."
+  def set_prep_status(%Meal{status: status} = meal, new)
+      when status in [:planning, :prepping] and new in [:planning, :prepping],
+      do: meal |> Ecto.Changeset.change(status: new) |> Repo.update()
+
+  # Keeps cooking/complete in step with dish progress. Planning/prepping are the cook's call,
+  # so they're only touched when progress is undone (back to prepping).
+  defp sync_status(meal_id) do
+    meal = Repo.get!(Meal, meal_id)
+    dishes = Repo.all(from d in Dish, where: d.meal_id == ^meal_id)
+    timed = Enum.filter(dishes, &(&1.cook_minutes + &1.buffer_minutes > 0))
+    started? = Enum.any?(timed, &(&1.cook_started_at || &1.cook_done_at))
+
+    new =
+      cond do
+        not started? and meal.status in [:cooking, :complete] -> :prepping
+        not started? -> meal.status
+        meal.finished_at || Enum.all?(timed, & &1.cook_done_at) -> :complete
+        true -> :cooking
+      end
+
+    if new != meal.status, do: meal |> Ecto.Changeset.change(status: new) |> Repo.update()
+    :ok
+  end
 
   def add_extra(%Dish{} = d, minutes),
     do:
@@ -200,20 +225,22 @@ defmodule CookingScheduler.Meals do
   @doc "Ends the meal now, even if some dishes weren't cooked. Undo with `reset_cooking/1`."
   def finish_meal(%Meal{} = meal) do
     meal
-    |> Ecto.Changeset.change(finished_at: DateTime.utc_now(:second))
+    |> Ecto.Changeset.change(finished_at: DateTime.utc_now(:second), status: :complete)
     |> Repo.update()
   end
 
   @doc """
   Clears started/finished/extra-time on a meal's dishes and its finished mark (keeps the
-  plan and prepped ticks), taking it back to "planned".
+  plan and prepped ticks), taking it back to "prepping".
   """
   def reset_cooking(%Meal{id: id}) do
     Repo.update_all(from(d in Dish, where: d.meal_id == ^id),
       set: [cook_started_at: nil, cook_done_at: nil, extra_minutes: 0]
     )
 
-    Repo.update_all(from(m in Meal, where: m.id == ^id), set: [finished_at: nil])
+    Repo.update_all(from(m in Meal, where: m.id == ^id),
+      set: [finished_at: nil, status: :prepping]
+    )
 
     :ok
   end
