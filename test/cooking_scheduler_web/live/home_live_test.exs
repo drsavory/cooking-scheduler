@@ -100,9 +100,12 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       assert has_element?(lv, "#meal-#{m.id}", "Planning")
 
       lv |> element("#start-prepping-#{m.id}") |> render_click()
-      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
+      assert_redirect(lv, ~p"/meals/#{m.id}/prep")
       assert Meals.get_meal!(m.id).status == :prepping
 
+      {:ok, lv, _} = live(conn, ~p"/")
+      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
+      assert has_element?(lv, "#prep-meal-#{m.id}")
       lv |> element("#back-to-planning-#{m.id}") |> render_click()
       assert Meals.get_meal!(m.id).status == :planning
     end

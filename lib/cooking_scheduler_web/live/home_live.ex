@@ -46,6 +46,12 @@ defmodule CookingSchedulerWeb.HomeLive do
     {:noreply, load_meals(socket)}
   end
 
+  def handle_event("start_prepping", %{"id" => id}, socket) do
+    meal = Meals.get_meal!(id)
+    {:ok, _} = Meals.set_prep_status(meal, :prepping)
+    {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/prep")}
+  end
+
   def handle_event("set_meal_status", %{"id" => id, "status" => status}, socket)
       when status in ["planning", "prepping"] do
     {:ok, _} = id |> Meals.get_meal!() |> Meals.set_prep_status(String.to_existing_atom(status))
@@ -233,11 +239,19 @@ defmodule CookingSchedulerWeb.HomeLive do
               <button
                 :if={s.status == :planning}
                 id={"start-prepping-#{s.meal.id}"}
-                phx-click={JS.push("set_meal_status", value: %{id: s.meal.id, status: "prepping"})}
+                phx-click={JS.push("start_prepping", value: %{id: s.meal.id})}
                 class="btn btn-xs btn-ghost rounded-full"
               >
                 <.icon name="hero-shopping-bag-micro" class="size-3.5" /> Start prepping
               </button>
+              <.link
+                :if={s.status == :prepping}
+                id={"prep-meal-#{s.meal.id}"}
+                navigate={~p"/meals/#{s.meal.id}/prep"}
+                class="btn btn-xs btn-primary btn-soft rounded-full"
+              >
+                <.icon name="hero-clipboard-document-check-micro" class="size-3.5" /> Open prep
+              </.link>
               <button
                 :if={s.status == :prepping}
                 id={"back-to-planning-#{s.meal.id}"}

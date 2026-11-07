@@ -50,6 +50,12 @@ defmodule CookingSchedulerWeb.PlanLive do
     {:noreply, load(socket)}
   end
 
+  def handle_event("start_prepping", _params, socket) do
+    meal = socket.assigns.meal
+    if meal.status == :planning, do: {:ok, _} = Meals.set_prep_status(meal, :prepping)
+    {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/prep")}
+  end
+
   def handle_event("copy_meal", _params, socket) do
     {:ok, meal} = Meals.create_meal_from(socket.assigns.meal)
     {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/plan")}
@@ -453,6 +459,15 @@ defmodule CookingSchedulerWeb.PlanLive do
       <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
         <button id="copy-meal" class="btn btn-sm btn-ghost rounded-full" phx-click="copy_meal">
           <.icon name="hero-document-duplicate" class="size-4" /> Copy as a new meal
+        </button>
+        <button
+          :if={@meal.status in [:planning, :prepping]}
+          id="prep-meal"
+          class="btn btn-sm btn-secondary btn-soft rounded-full"
+          phx-click="start_prepping"
+        >
+          <.icon name="hero-clipboard-document-check" class="size-4" />
+          {if @meal.status == :planning, do: "Start prepping", else: "Open prep"}
         </button>
         <.link
           id="cook-meal"

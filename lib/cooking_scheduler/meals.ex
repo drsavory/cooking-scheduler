@@ -173,6 +173,15 @@ defmodule CookingScheduler.Meals do
   def set_prepped(%Dish{} = d, value),
     do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update()
 
+  def set_ingredients_in(%Dish{} = d, value),
+    do: d |> Ecto.Changeset.change(ingredients_in: value) |> Repo.update()
+
+  @doc "Ticks (or unticks) \"all ingredients in\" for every dish in a meal."
+  def set_all_ingredients_in(%Meal{id: id}, value) do
+    Repo.update_all(from(d in Dish, where: d.meal_id == ^id), set: [ingredients_in: value])
+    :ok
+  end
+
   def start_cooking(%Dish{} = d, at),
     do: d |> Ecto.Changeset.change(cook_started_at: at) |> update_progress()
 
