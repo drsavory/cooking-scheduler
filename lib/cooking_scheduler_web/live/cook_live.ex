@@ -107,7 +107,7 @@ defmodule CookingSchedulerWeb.CookLive do
 
   def handle_event("finish", _params, socket) do
     {:ok, _} = Meals.finish_meal(socket.assigns.meal)
-    {:noreply, push_navigate(socket, to: ~p"/")}
+    {:noreply, push_navigate(socket, to: ~p"/meals/#{socket.assigns.meal.id}/summary")}
   end
 
   def handle_event("reset", _params, socket) do

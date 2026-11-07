@@ -4,7 +4,7 @@ defmodule CookingScheduler.Meals do
   """
 
   import Ecto.Query
-  alias CookingScheduler.Repo
+  alias CookingScheduler.{Photos, Repo}
 
   alias CookingScheduler.Meals.{
     MealDish,
@@ -64,7 +64,13 @@ defmodule CookingScheduler.Meals do
 
   def change_meal(%Meal{} = meal, attrs \\ %{}), do: Meal.changeset(meal, attrs)
   def update_meal(%Meal{} = meal, attrs), do: meal |> Meal.changeset(attrs) |> Repo.update()
-  def delete_meal(%Meal{} = meal), do: Repo.delete(meal)
+
+  def delete_meal(%Meal{} = meal) do
+    keys = Photos.keys_for_meal(meal)
+    result = Repo.delete(meal)
+    with {:ok, _} <- result, do: Photos.purge(keys)
+    result
+  end
 
   @doc "Creates a blank meal dated today."
   def create_meal(attrs \\ %{}) do
@@ -140,7 +146,12 @@ defmodule CookingScheduler.Meals do
     dish |> MealDish.changeset(attrs) |> Repo.update() |> sync_after()
   end
 
-  def delete_meal_dish(%MealDish{} = dish), do: Repo.delete(dish)
+  def delete_meal_dish(%MealDish{} = dish) do
+    keys = Photos.keys_for_meal_dish(dish)
+    result = Repo.delete(dish)
+    with {:ok, _} <- result, do: Photos.purge(keys)
+    result
+  end
 
   @doc "Adds a dish with sensible defaults for how it's cooked, ready to edit in place."
   def add_meal_dish(%Meal{} = meal, :oven, kitchen) do

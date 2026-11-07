@@ -311,6 +311,15 @@ defmodule CookingSchedulerWeb.HomeLive do
                 <.icon name="hero-table-cells" class="size-4" /> Plan
               </.link>
               <.link
+                :if={s.status == :complete}
+                id={"summary-meal-#{s.meal.id}"}
+                navigate={~p"/meals/#{s.meal.id}/summary"}
+                class="btn btn-glow flex-1 rounded-full"
+              >
+                <.icon name="hero-camera" class="size-4" /> Photos
+              </.link>
+              <.link
+                :if={s.status != :complete}
                 id={"cook-meal-#{s.meal.id}"}
                 navigate={~p"/meals/#{s.meal.id}/cook"}
                 class="btn btn-glow flex-1 rounded-full"

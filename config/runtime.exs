@@ -85,6 +85,18 @@ if config_env() == :prod do
     ],
     secret_key_base: secret_key_base
 
+  # Photos go to a Tigris bucket, created with `fly storage create`, which sets these
+  # secrets (the bucket as BUCKET_NAME). Without a bucket, uploads are off.
+  if bucket = System.get_env("BUCKET_NAME") do
+    config :cooking_scheduler, CookingScheduler.Storage, adapter: CookingScheduler.Storage.Tigris
+
+    config :cooking_scheduler, CookingScheduler.Storage.Tigris,
+      bucket: bucket,
+      host: System.get_env("TIGRIS_HOST") || "fly.storage.tigris.dev",
+      access_key_id: System.fetch_env!("AWS_ACCESS_KEY_ID"),
+      secret_access_key: System.fetch_env!("AWS_SECRET_ACCESS_KEY")
+  end
+
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key

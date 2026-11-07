@@ -303,4 +303,38 @@ defmodule CookingSchedulerWeb.DishLiveTest do
 
     assert Meals.get_dish!(saved.id).tags == ["veg", "side"]
   end
+
+  describe "photos" do
+    @png <<0x89, "PNG\r\n", 0x1A, "\n", 0, 0, 0, 13>>
+
+    defp photo_for(owner) do
+      path = Path.join(System.tmp_dir!(), "dl-#{System.unique_integer([:positive])}")
+      File.write!(path, @png)
+      {:ok, photo} = CookingScheduler.Photos.add_photo(owner, path, "x.png")
+      photo
+    end
+
+    test "a library dish shows photos from every meal it was cooked in", %{conn: conn, dish: dish} do
+      library = Meals.get_dish!(Meals.get_meal_dish!(dish.id).dish_id)
+      {:ok, other} = Meals.create_meal(%{name: "Easter"})
+      {:ok, other_dish} = Meals.add_dish_to_meal(other, library)
+      a = photo_for(dish)
+      b = photo_for(other_dish)
+
+      {:ok, lv, _} = live(conn, ~p"/dishes/#{library.id}")
+
+      assert has_element?(lv, "#dish-photo-#{a.id} img")
+      assert has_element?(lv, "#dish-photo-#{b.id} img")
+      assert has_element?(lv, ~s|#dish-photo-meal-#{b.id}[href="/meals/#{other.id}/summary"]|)
+    end
+
+    test "a meal dish shows its own photos, and a hint when there are none", ctx do
+      {:ok, lv, _} = live(ctx.conn, ~p"/meals/#{ctx.meal.id}/dishes/#{ctx.dish.id}")
+      assert has_element?(lv, "#no-photos")
+
+      photo = photo_for(ctx.dish)
+      {:ok, lv, _} = live(ctx.conn, ~p"/meals/#{ctx.meal.id}/dishes/#{ctx.dish.id}")
+      assert has_element?(lv, "#dish-photo-#{photo.id} img")
+    end
+  end
 end

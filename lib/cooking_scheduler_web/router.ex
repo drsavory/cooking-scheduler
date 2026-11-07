@@ -27,7 +27,13 @@ defmodule CookingSchedulerWeb.Router do
       live "/meals/:id/prep", PrepLive
       live "/meals/:id/shopping", ShoppingLive
       live "/meals/:id/cook", CookLive
+      live "/meals/:id/summary", SummaryLive
     end
+  end
+
+  # Images are requested with an `image/*` Accept header, so no `accepts` plug here.
+  scope "/", CookingSchedulerWeb do
+    get "/photos/:id", PhotoController, :show
   end
 
   # Other scopes may use custom stacks.
