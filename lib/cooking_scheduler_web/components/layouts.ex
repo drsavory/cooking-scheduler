@@ -31,8 +31,6 @@ defmodule CookingSchedulerWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
-  attr :wide, :boolean, default: false, doc: "use the wider layout (dense screens)"
-
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -43,10 +41,7 @@ defmodule CookingSchedulerWeb.Layouts do
       <div class="aurora-blob aurora-c"></div>
     </div>
     <div class="relative min-h-screen">
-      <header class={[
-        "sticky top-3 z-30 mx-auto px-3 sm:px-6",
-        (@wide && "max-w-6xl") || "max-w-4xl"
-      ]}>
+      <header class="sticky top-3 z-30 mx-auto max-w-[96rem] px-3 sm:px-6">
         <div class="glass flex items-center justify-between rounded-full py-2 pl-2.5 pr-3">
           <a href="/" class="flex items-center gap-2.5">
             <span class="grid size-9 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30">
@@ -63,10 +58,7 @@ defmodule CookingSchedulerWeb.Layouts do
         </div>
       </header>
 
-      <main class={[
-        "relative mx-auto px-4 pb-24 pt-10 sm:px-6",
-        (@wide && "max-w-6xl") || "max-w-4xl"
-      ]}>
+      <main class="relative mx-auto max-w-[96rem] px-4 pb-24 pt-10 sm:px-6">
         {render_slot(@inner_block)}
       </main>
     </div>

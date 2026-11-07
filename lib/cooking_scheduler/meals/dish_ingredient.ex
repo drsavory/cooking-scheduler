@@ -1,7 +1,7 @@
 defmodule CookingScheduler.Meals.DishIngredient do
   @moduledoc """
   An ingredient in a dish, with how much of it: a number and a unit from `units/0`.
-  No unit means a count (2 onions). Owned by a meal dish or a saved dish.
+  No unit means a count (2 onions). Owned by a meal dish or a library dish.
   """
   use Ecto.Schema
 
@@ -11,8 +11,8 @@ defmodule CookingScheduler.Meals.DishIngredient do
     field :amount, :float
     field :unit, Ecto.Enum, values: @units
     belongs_to :ingredient, CookingScheduler.Meals.Ingredient
+    belongs_to :meal_dish, CookingScheduler.Meals.MealDish
     belongs_to :dish, CookingScheduler.Meals.Dish
-    belongs_to :saved_dish, CookingScheduler.Meals.SavedDish
     timestamps(type: :utc_datetime)
   end
 

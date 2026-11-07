@@ -6,7 +6,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
   alias CookingScheduler.{Kitchen, Meals}
 
   defp meal, do: hd(Meals.list_meals())
-  defp dishes, do: Meals.list_dishes(meal())
+  defp dishes, do: Meals.list_meal_dishes(meal())
   defp cook_path, do: "/meals/#{meal().id}/cook"
 
   defp set_clock(hour, minute),
@@ -73,10 +73,10 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     {:ok, lv, _} = live(conn, cook_path())
 
     lv |> element("#task-#{turkey.id}-prep button") |> render_click()
-    assert Meals.get_dish!(turkey.id).prepped
+    assert Meals.get_meal_dish!(turkey.id).prepped
 
     lv |> element("#task-#{turkey.id}-start button") |> render_click()
-    assert Meals.get_dish!(turkey.id).cook_started_at == 7 * 60 + 5
+    assert Meals.get_meal_dish!(turkey.id).cook_started_at == 7 * 60 + 5
 
     # now in progress, with an out time of actual start + 4h30
     assert has_element?(lv, "#cooking-#{turkey.id}", "Out at")
@@ -109,7 +109,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     assert has_element?(lv, "#status", "On track")
 
     lv |> element("#cooking-#{turkey.id} button", "+15m") |> render_click()
-    assert Meals.get_dish!(turkey.id).extra_minutes == 15
+    assert Meals.get_meal_dish!(turkey.id).extra_minutes == 15
     assert has_element?(lv, "#cooking-#{turkey.id}", "11:45")
     assert has_element?(lv, "#status", "Running 15m behind")
     assert has_element?(lv, "#push-dinner", "13:45")
@@ -136,7 +136,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     assert has_element?(lv, "#done-#{turkey.id}-start")
 
     lv |> element("#done-#{turkey.id}-start button", "undo") |> render_click()
-    assert Meals.get_dish!(turkey.id).cook_started_at == nil
+    assert Meals.get_meal_dish!(turkey.id).cook_started_at == nil
     assert has_element?(lv, "#task-#{turkey.id}-start")
   end
 
@@ -157,7 +157,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     lv |> element("button", "Reset progress") |> render_click()
 
     assert %{cook_started_at: nil, extra_minutes: 0, name: "Turkey (6.1 kg)"} =
-             Meals.get_dish!(turkey.id)
+             Meals.get_meal_dish!(turkey.id)
   end
 
   test "everything done shows the finish message", %{conn: conn} do
@@ -167,7 +167,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     for d <- dishes() do
       Meals.set_prepped(d, true)
       Meals.start_cooking(d, 8 * 60)
-      Meals.finish_cooking(Meals.get_dish!(d.id), 9 * 60)
+      Meals.finish_cooking(Meals.get_meal_dish!(d.id), 9 * 60)
     end
 
     {:ok, lv2, _} = live(Phoenix.ConnTest.build_conn(), cook_path())
@@ -176,7 +176,7 @@ defmodule CookingSchedulerWeb.CookLiveTest do
   end
 
   test "an empty meal points you to the dishes screen", %{conn: conn} do
-    for d <- dishes(), do: Meals.delete_dish(d)
+    for d <- dishes(), do: Meals.delete_meal_dish(d)
     {:ok, _lv, html} = live(conn, cook_path())
     assert html =~ "Nothing to cook yet"
   end
@@ -188,5 +188,16 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     confirm_dialog(lv, "finish-cooking")
     assert_redirect(lv, ~p"/")
     assert [%{status: :complete}] = Meals.list_meal_summaries()
+  end
+
+  test "shows the whole meal on one timeline", %{conn: conn, turkey: turkey} do
+    {:ok, lv, _} = live(conn, cook_path())
+
+    assert has_element?(lv, "#overview")
+    assert has_element?(lv, "#overview-row-#{turkey.id}")
+    assert has_element?(lv, "[id^=overview-group-label-]")
+    assert has_element?(lv, "#overview-tip-#{turkey.id}[role=tooltip]")
+    assert has_element?(lv, "#overview-now")
+    assert has_element?(lv, "#overview-serve")
   end
 end

@@ -15,7 +15,7 @@ defmodule CookingScheduler.Meals.Meal do
     # Set (not cast) when the cook ends the meal early.
     field :finished_at, :utc_datetime
 
-    has_many :dishes, CookingScheduler.Meals.Dish
+    has_many :meal_dishes, CookingScheduler.Meals.MealDish
 
     timestamps(type: :utc_datetime)
   end

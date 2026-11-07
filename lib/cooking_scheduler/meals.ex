@@ -1,18 +1,17 @@
 defmodule CookingScheduler.Meals do
   @moduledoc """
-  Meals (e.g. "Christmas 2025"), the dishes in each one, and the reusable library of
-  saved dishes they're copied from.
+  Meals (e.g. "Christmas 2025"), the dishes in each one, and the dishes you can choose from  dishes they're copied from.
   """
 
   import Ecto.Query
   alias CookingScheduler.Repo
 
   alias CookingScheduler.Meals.{
-    Dish,
+    MealDish,
     DishIngredient,
     Ingredient,
     Meal,
-    SavedDish,
+    Dish,
     ShoppingCheck,
     Starter
   }
@@ -36,7 +35,7 @@ defmodule CookingScheduler.Meals do
   ready (0 if on time), and nil until the meal is complete.
   """
   def list_meal_summaries do
-    dishes = Repo.all(from(d in Dish)) |> Enum.group_by(& &1.meal_id)
+    dishes = Repo.all(from(d in MealDish)) |> Enum.group_by(& &1.meal_id)
 
     for meal <- list_meals() do
       summarize(meal, Map.get(dishes, meal.id, []))
@@ -75,7 +74,7 @@ defmodule CookingScheduler.Meals do
   end
 
   @doc """
-  Creates a new meal containing a copy of every dish from `source` (see `copy_dishes/2`).
+  Creates a new meal containing a copy of every dish from `source` (see `copy_meal_dishes/2`).
   """
   def create_meal_from(%Meal{} = source, attrs \\ %{}) do
     Repo.transaction(fn ->
@@ -84,24 +83,24 @@ defmodule CookingScheduler.Meals do
         |> Meal.changeset(attrs)
         |> Repo.insert()
 
-      copy_dishes(source, meal)
+      copy_meal_dishes(source, meal)
 
       meal
     end)
   end
 
   @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes buffer_minutes
-             rest_minutes appliance_id notes link saved_dish_id)a
+             rest_minutes appliance_id notes link dish_id)a
 
   @doc """
   Copies every dish from `source` into `target`: same times, temperatures, notes and
   links, with the day's progress cleared and ingredients/prep unticked.
   """
-  def copy_dishes(%Meal{} = source, %Meal{} = target) do
-    for dish <- list_dishes(source) do
+  def copy_meal_dishes(%Meal{} = source, %Meal{} = target) do
+    for dish <- list_meal_dishes(source) do
       fields = dish |> Map.take(@copied) |> Map.put(:meal_id, target.id)
-      copy = Repo.insert!(struct(Dish, fields))
-      copy_ingredients({:dish, dish.id}, {:dish, copy.id})
+      copy = Repo.insert!(struct(MealDish, fields))
+      copy_ingredients({:meal_dish, dish.id}, {:meal_dish, copy.id})
     end
 
     :ok
@@ -123,31 +122,31 @@ defmodule CookingScheduler.Meals do
 
   # ---- dishes in a meal -----------------------------------------------------
 
-  def list_dishes(%Meal{id: id}),
-    do: Repo.all(from d in Dish, where: d.meal_id == ^id, order_by: d.id)
+  def list_meal_dishes(%Meal{id: id}),
+    do: Repo.all(from d in MealDish, where: d.meal_id == ^id, order_by: d.id)
 
-  def get_dish!(id), do: Repo.get!(Dish, id)
+  def get_meal_dish!(id), do: Repo.get!(MealDish, id)
 
-  def change_dish(%Dish{} = dish, attrs \\ %{}), do: Dish.changeset(dish, attrs)
+  def change_meal_dish(%MealDish{} = dish, attrs \\ %{}), do: MealDish.changeset(dish, attrs)
 
-  def create_dish(%Meal{} = meal, attrs) do
-    %Dish{meal_id: meal.id}
-    |> Dish.changeset(attrs)
+  def create_meal_dish(%Meal{} = meal, attrs) do
+    %MealDish{meal_id: meal.id}
+    |> MealDish.changeset(attrs)
     |> Repo.insert()
     |> sync_after()
   end
 
-  def update_dish(%Dish{} = dish, attrs) do
-    dish |> Dish.changeset(attrs) |> Repo.update() |> sync_after()
+  def update_meal_dish(%MealDish{} = dish, attrs) do
+    dish |> MealDish.changeset(attrs) |> Repo.update() |> sync_after()
   end
 
-  def delete_dish(%Dish{} = dish), do: Repo.delete(dish)
+  def delete_meal_dish(%MealDish{} = dish), do: Repo.delete(dish)
 
   @doc "Adds a dish with sensible defaults for how it's cooked, ready to edit in place."
-  def add_dish(%Meal{} = meal, :oven, kitchen) do
+  def add_meal_dish(%Meal{} = meal, :oven, kitchen) do
     unit = kitchen |> Enum.find(&(&1.kind == :oven)) |> then(&((&1 && &1.temp_unit) || :gas_mark))
 
-    create_dish(meal, %{
+    create_meal_dish(meal, %{
       name: "New oven dish",
       method: :oven,
       temp_unit: unit,
@@ -156,18 +155,18 @@ defmodule CookingScheduler.Meals do
     })
   end
 
-  def add_dish(%Meal{} = meal, :ring, _kitchen),
+  def add_meal_dish(%Meal{} = meal, :ring, _kitchen),
     do:
-      create_dish(meal, %{
+      create_meal_dish(meal, %{
         name: "New hob dish",
         method: :ring,
         ring_size: :medium,
         cook_minutes: 20
       })
 
-  def add_dish(%Meal{} = meal, :appliance, _kitchen),
+  def add_meal_dish(%Meal{} = meal, :appliance, _kitchen),
     do:
-      create_dish(meal, %{
+      create_meal_dish(meal, %{
         name: "New slow cooker / grill dish",
         method: :appliance,
         cook_minutes: 60
@@ -179,28 +178,28 @@ defmodule CookingScheduler.Meals do
 
   # ---- live cooking progress (times are minutes after midnight) --------------
 
-  def set_prepped(%Dish{} = d, value),
+  def set_prepped(%MealDish{} = d, value),
     do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update()
 
-  def set_ingredients_in(%Dish{} = d, value),
+  def set_ingredients_in(%MealDish{} = d, value),
     do: d |> Ecto.Changeset.change(ingredients_in: value) |> Repo.update()
 
   @doc "Ticks (or unticks) \"all ingredients in\" for every dish in a meal."
   def set_all_ingredients_in(%Meal{id: id}, value) do
-    Repo.update_all(from(d in Dish, where: d.meal_id == ^id), set: [ingredients_in: value])
+    Repo.update_all(from(d in MealDish, where: d.meal_id == ^id), set: [ingredients_in: value])
     :ok
   end
 
-  def start_cooking(%Dish{} = d, at),
+  def start_cooking(%MealDish{} = d, at),
     do: d |> Ecto.Changeset.change(cook_started_at: at) |> update_progress()
 
-  def finish_cooking(%Dish{} = d, at),
+  def finish_cooking(%MealDish{} = d, at),
     do: d |> Ecto.Changeset.change(cook_done_at: at) |> update_progress()
 
-  def undo_finish(%Dish{} = d),
+  def undo_finish(%MealDish{} = d),
     do: d |> Ecto.Changeset.change(cook_done_at: nil) |> update_progress()
 
-  def undo_start(%Dish{} = d),
+  def undo_start(%MealDish{} = d),
     do: d |> Ecto.Changeset.change(cook_started_at: nil, cook_done_at: nil) |> update_progress()
 
   defp update_progress(changeset) do
@@ -219,7 +218,7 @@ defmodule CookingScheduler.Meals do
   # so they're only touched when progress is undone (back to prepping).
   defp sync_status(meal_id) do
     meal = Repo.get!(Meal, meal_id)
-    dishes = Repo.all(from d in Dish, where: d.meal_id == ^meal_id)
+    dishes = Repo.all(from d in MealDish, where: d.meal_id == ^meal_id)
     timed = Enum.filter(dishes, &(&1.cook_minutes + &1.buffer_minutes > 0))
     started? = Enum.any?(timed, &(&1.cook_started_at || &1.cook_done_at))
 
@@ -235,7 +234,7 @@ defmodule CookingScheduler.Meals do
     :ok
   end
 
-  def add_extra(%Dish{} = d, minutes),
+  def add_extra(%MealDish{} = d, minutes),
     do:
       d
       |> Ecto.Changeset.change(extra_minutes: max(d.extra_minutes + minutes, 0))
@@ -253,7 +252,7 @@ defmodule CookingScheduler.Meals do
   plan and prepped ticks), taking it back to "prepping".
   """
   def reset_cooking(%Meal{id: id}) do
-    Repo.update_all(from(d in Dish, where: d.meal_id == ^id),
+    Repo.update_all(from(d in MealDish, where: d.meal_id == ^id),
       set: [cook_started_at: nil, cook_done_at: nil, extra_minutes: 0]
     )
 
@@ -271,11 +270,14 @@ defmodule CookingScheduler.Meals do
   something to edit rather than a blank page. Does nothing if the meal has dishes.
   """
   def load_starter_dishes(%Meal{} = meal, kitchen) do
-    if list_dishes(meal) == [] do
+    if list_meal_dishes(meal) == [] do
       Repo.transaction(fn ->
         for {attrs, hint} <- Starter.dishes() do
           {:ok, _} =
-            create_dish(meal, Map.put(attrs, :appliance_id, appliance_id_matching(kitchen, hint)))
+            create_meal_dish(
+              meal,
+              Map.put(attrs, :appliance_id, appliance_id_matching(kitchen, hint))
+            )
         end
       end)
     else
@@ -296,63 +298,63 @@ defmodule CookingScheduler.Meals do
     end
   end
 
-  # ---- library of saved dishes ----------------------------------------------
+  # ---- library of dishes ----------------------------------------------
 
-  def list_saved_dishes, do: Repo.all(from s in SavedDish, order_by: fragment("lower(?)", s.name))
-  def get_saved_dish!(id), do: Repo.get!(SavedDish, id)
-  def change_saved_dish(%SavedDish{} = saved, attrs \\ %{}), do: SavedDish.changeset(saved, attrs)
+  def list_dishes, do: Repo.all(from s in Dish, order_by: fragment("lower(?)", s.name))
+  def get_dish!(id), do: Repo.get!(Dish, id)
+  def change_dish(%Dish{} = dish, attrs \\ %{}), do: Dish.changeset(dish, attrs)
 
-  def create_saved_dish(attrs), do: %SavedDish{} |> SavedDish.changeset(attrs) |> Repo.insert()
+  def create_dish(attrs), do: %Dish{} |> Dish.changeset(attrs) |> Repo.insert()
 
-  def update_saved_dish(%SavedDish{} = saved, attrs),
-    do: saved |> SavedDish.changeset(attrs) |> Repo.update()
+  def update_dish(%Dish{} = dish, attrs),
+    do: dish |> Dish.changeset(attrs) |> Repo.update()
 
-  def delete_saved_dish(%SavedDish{} = saved), do: Repo.delete(saved)
+  def delete_dish(%Dish{} = dish), do: Repo.delete(dish)
 
-  @doc "Saved dishes that aren't already in `meal`."
-  def saved_dishes_not_in(%Meal{id: id}) do
+  @doc "Dishes that aren't already in `meal`."
+  def dishes_not_in(%Meal{id: id}) do
     in_meal =
-      from d in Dish,
-        where: d.meal_id == ^id and not is_nil(d.saved_dish_id),
-        select: d.saved_dish_id
+      from d in MealDish,
+        where: d.meal_id == ^id and not is_nil(d.dish_id),
+        select: d.dish_id
 
     Repo.all(
-      from s in SavedDish,
+      from s in Dish,
         where: s.id not in subquery(in_meal),
         order_by: fragment("lower(?)", s.name)
     )
   end
 
-  @doc "Adds a copy of a saved dish to a meal."
-  def add_saved_dish(%Meal{} = meal, %SavedDish{} = saved) do
-    attrs = Map.take(saved, SavedDish.template_fields())
+  @doc "Adds a copy of a dish to a meal (a `MealDish`)."
+  def add_dish_to_meal(%Meal{} = meal, %Dish{} = dish) do
+    attrs = Map.take(dish, Dish.template_fields())
 
-    with {:ok, dish} <-
-           %Dish{meal_id: meal.id, saved_dish_id: saved.id}
-           |> Dish.changeset(attrs)
+    with {:ok, meal_dish} <-
+           %MealDish{meal_id: meal.id, dish_id: dish.id}
+           |> MealDish.changeset(attrs)
            |> Repo.insert() do
-      copy_ingredients({:saved, saved.id}, {:dish, dish.id})
-      {:ok, dish}
+      copy_ingredients({:dish, dish.id}, {:meal_dish, meal_dish.id})
+      {:ok, meal_dish}
     end
   end
 
-  @doc "Every meal each saved dish has been used in: `%{saved_dish_id => [{meal, dish}]}`, newest meal first."
-  def usage_by_saved_dish do
+  @doc "Every meal each dish has been used in: `%{dish_id => [{meal, dish}]}`, newest meal first."
+  def usage_by_dish do
     Repo.all(
-      from d in Dish,
+      from d in MealDish,
         join: m in assoc(d, :meal),
-        where: not is_nil(d.saved_dish_id),
+        where: not is_nil(d.dish_id),
         order_by: [desc: m.date, desc: m.id],
-        select: {d.saved_dish_id, m, d}
+        select: {d.dish_id, m, d}
     )
     |> Enum.group_by(&elem(&1, 0), fn {_id, m, d} -> {m, d} end)
   end
 
   # Keeps the library current: when you edit a dish in a meal that hasn't been cooked yet,
-  # the saved version takes on those values, so next time you start from how you did it
+  # the library dish takes on those values, so next time you start from how you did it
   # last. Placeholder names ("New oven dish") are never saved, and edits to meals that
   # have been started don't change the library.
-  defp sync_after({:ok, %Dish{} = dish} = result) do
+  defp sync_after({:ok, %MealDish{} = dish} = result) do
     if library_worthy?(dish) and not started?(dish.meal_id), do: sync_to_library(dish)
     result
   end
@@ -361,28 +363,28 @@ defmodule CookingScheduler.Meals do
 
   defp started?(meal_id) do
     Repo.exists?(
-      from d in Dish,
+      from d in MealDish,
         where:
           d.meal_id == ^meal_id and (not is_nil(d.cook_started_at) or not is_nil(d.cook_done_at))
     )
   end
 
-  defp library_worthy?(%Dish{name: name}), do: not String.starts_with?(name, "New ")
+  defp library_worthy?(%MealDish{name: name}), do: not String.starts_with?(name, "New ")
 
-  defp sync_to_library(%Dish{} = dish) do
-    attrs = Map.take(dish, SavedDish.template_fields())
+  defp sync_to_library(%MealDish{} = dish) do
+    attrs = Map.take(dish, Dish.template_fields())
     key = String.downcase(dish.name)
 
     saved =
-      case Repo.one(from s in SavedDish, where: fragment("lower(?)", s.name) == ^key) do
-        nil -> %SavedDish{}
+      case Repo.one(from s in Dish, where: fragment("lower(?)", s.name) == ^key) do
+        nil -> %Dish{}
         existing -> existing
       end
 
-    {:ok, saved} = saved |> SavedDish.changeset(attrs) |> Repo.insert_or_update()
+    {:ok, saved} = saved |> Dish.changeset(attrs) |> Repo.insert_or_update()
 
-    if dish.saved_dish_id != saved.id do
-      dish |> Ecto.Changeset.change(saved_dish_id: saved.id) |> Repo.update!()
+    if dish.dish_id != saved.id do
+      dish |> Ecto.Changeset.change(dish_id: saved.id) |> Repo.update!()
     end
 
     :ok
@@ -407,7 +409,7 @@ defmodule CookingScheduler.Meals do
 
     Repo.all(
       from di in DishIngredient,
-        join: d in assoc(di, :dish),
+        join: d in assoc(di, :meal_dish),
         join: i in assoc(di, :ingredient),
         where: d.meal_id == ^id,
         order_by: [fragment("lower(?)", i.name), d.name],
@@ -466,25 +468,28 @@ defmodule CookingScheduler.Meals do
     rows =
       Repo.all(
         from di in DishIngredient,
-          join: d in assoc(di, :dish),
+          join: d in assoc(di, :meal_dish),
           left_join: c in ShoppingCheck,
           on: c.meal_id == d.meal_id and c.ingredient_id == di.ingredient_id,
           where: d.meal_id == ^id,
           select: {d.id, di.ingredient_id, not is_nil(c.id)}
       )
 
-    for {dish_id, dish_rows} <- Enum.group_by(rows, &elem(&1, 0)),
+    for {meal_dish_id, dish_rows} <- Enum.group_by(rows, &elem(&1, 0)),
         is_nil(ingredient_id) or Enum.any?(dish_rows, &(elem(&1, 1) == ingredient_id)) do
       all_in = Enum.all?(dish_rows, &elem(&1, 2))
-      Repo.update_all(from(d in Dish, where: d.id == ^dish_id), set: [ingredients_in: all_in])
+
+      Repo.update_all(from(d in MealDish, where: d.id == ^meal_dish_id),
+        set: [ingredients_in: all_in]
+      )
     end
 
     :ok
   end
 
-  @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal or saved dish."
+  @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal dish or a dish."
+  def list_dish_ingredients(%MealDish{id: id}), do: ingredients_for({:meal_dish, id})
   def list_dish_ingredients(%Dish{id: id}), do: ingredients_for({:dish, id})
-  def list_dish_ingredients(%SavedDish{id: id}), do: ingredients_for({:saved, id})
 
   defp ingredients_for(owner) do
     Repo.all(
@@ -562,14 +567,16 @@ defmodule CookingScheduler.Meals do
     end
   end
 
+  defp owner(%MealDish{id: id}), do: {:meal_dish, id}
   defp owner(%Dish{id: id}), do: {:dish, id}
-  defp owner(%SavedDish{id: id}), do: {:saved, id}
 
+  defp owner_key({:meal_dish, _}), do: :meal_dish_id
   defp owner_key({:dish, _}), do: :dish_id
-  defp owner_key({:saved, _}), do: :saved_dish_id
+
+  defp owner_query({:meal_dish, id}),
+    do: from(di in DishIngredient, where: di.meal_dish_id == ^id)
 
   defp owner_query({:dish, id}), do: from(di in DishIngredient, where: di.dish_id == ^id)
-  defp owner_query({:saved, id}), do: from(di in DishIngredient, where: di.saved_dish_id == ^id)
 
   defp copy_ingredients(from_owner, to_owner) do
     for di <- Repo.all(owner_query(from_owner)) do
@@ -589,14 +596,14 @@ defmodule CookingScheduler.Meals do
   # Same rule as the other details: ingredient edits on a meal dish flow back to its library
   # dish (unless it's a placeholder or the meal has been started). Editing a library dish
   # itself pushes its ingredients on to its unstarted meals (see below).
-  defp sync_ingredients_to_library(%Dish{} = dish) do
-    dish = Repo.get!(Dish, dish.id)
+  defp sync_ingredients_to_library(%MealDish{} = dish) do
+    dish = Repo.get!(MealDish, dish.id)
 
     if library_worthy?(dish) and not started?(dish.meal_id) do
       sync_to_library(dish)
-      dish = Repo.get!(Dish, dish.id)
-      Repo.delete_all(owner_query({:saved, dish.saved_dish_id}))
-      copy_ingredients({:dish, dish.id}, {:saved, dish.saved_dish_id})
+      dish = Repo.get!(MealDish, dish.id)
+      Repo.delete_all(owner_query({:dish, dish.dish_id}))
+      copy_ingredients({:meal_dish, dish.id}, {:dish, dish.dish_id})
     end
 
     :ok
@@ -604,24 +611,24 @@ defmodule CookingScheduler.Meals do
 
   # The other way round: a library dish's ingredients also replace those of its copies in
   # meals that haven't been started (planning or prepping). Started meals are history.
-  defp sync_ingredients_to_library(%SavedDish{} = saved), do: push_ingredients_to_meals(saved)
+  defp sync_ingredients_to_library(%Dish{} = dish), do: push_ingredients_to_meals(dish)
 
   @doc """
   Copies a library dish's ingredients onto its dishes in meals still being planned or prepped,
   replacing what they had. Meals being cooked or finished are left alone.
   """
-  def push_ingredients_to_meals(%SavedDish{id: id}) do
+  def push_ingredients_to_meals(%Dish{id: id}) do
     targets =
       Repo.all(
-        from d in Dish,
+        from d in MealDish,
           join: m in assoc(d, :meal),
-          where: d.saved_dish_id == ^id and m.status in [:planning, :prepping],
+          where: d.dish_id == ^id and m.status in [:planning, :prepping],
           select: d.id
       )
 
-    for dish_id <- targets do
-      Repo.delete_all(owner_query({:dish, dish_id}))
-      copy_ingredients({:saved, id}, {:dish, dish_id})
+    for meal_dish_id <- targets do
+      Repo.delete_all(owner_query({:meal_dish, meal_dish_id}))
+      copy_ingredients({:dish, id}, {:meal_dish, meal_dish_id})
     end
 
     :ok

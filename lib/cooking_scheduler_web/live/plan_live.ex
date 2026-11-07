@@ -2,7 +2,7 @@ defmodule CookingSchedulerWeb.PlanLive do
   use CookingSchedulerWeb, :live_view
 
   alias CookingScheduler.{Duration, Kitchen, Meals, Planner}
-  alias CookingScheduler.Meals.{Dish, Meal}
+  alias CookingScheduler.Meals.{MealDish, Meal}
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -13,7 +13,7 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   defp load(socket, %Meal{} = meal) do
     kitchen = Kitchen.list_appliances()
-    dishes = Meals.list_dishes(meal)
+    dishes = Meals.list_meal_dishes(meal)
 
     socket
     |> assign(:page_title, meal.name)
@@ -21,7 +21,7 @@ defmodule CookingSchedulerWeb.PlanLive do
     |> assign(:meal, meal)
     |> assign(:meal_form, to_form(Meals.change_meal(meal), id: "meal"))
     |> assign_plan(dishes, Meal.serve_minutes(meal), kitchen)
-    |> assign(:saved, Meals.saved_dishes_not_in(meal))
+    |> assign(:saved, Meals.dishes_not_in(meal))
     |> assign(
       :other_meals,
       for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
@@ -38,9 +38,12 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   @impl true
-  def handle_event("add_dish", %{"method" => method}, socket) do
-    method = Enum.find(Dish.methods(), &(Atom.to_string(&1) == method))
-    if method, do: {:ok, _} = Meals.add_dish(socket.assigns.meal, method, socket.assigns.kitchen)
+  def handle_event("add_meal_dish", %{"method" => method}, socket) do
+    method = Enum.find(MealDish.methods(), &(Atom.to_string(&1) == method))
+
+    if method,
+      do: {:ok, _} = Meals.add_meal_dish(socket.assigns.meal, method, socket.assigns.kitchen)
+
     {:noreply, load(socket)}
   end
 
@@ -50,12 +53,12 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   def handle_event("copy_from", %{"id" => id}, socket) do
-    :ok = Meals.copy_dishes(Meals.get_meal!(id), socket.assigns.meal)
+    :ok = Meals.copy_meal_dishes(Meals.get_meal!(id), socket.assigns.meal)
     {:noreply, load(socket)}
   end
 
   def handle_event("add_saved", %{"id" => id}, socket) do
-    {:ok, _} = Meals.add_saved_dish(socket.assigns.meal, Meals.get_saved_dish!(id))
+    {:ok, _} = Meals.add_dish_to_meal(socket.assigns.meal, Meals.get_dish!(id))
     {:noreply, load(socket)}
   end
 
@@ -78,12 +81,12 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   # Cards are always-editable forms: every change is saved as soon as it's valid.
-  def handle_event("update", %{"dish_id" => id, "dish" => params}, socket) do
-    dish = Meals.get_dish!(id)
-    changeset = Meals.change_dish(dish, params)
+  def handle_event("update", %{"meal_dish_id" => id, "meal_dish" => params}, socket) do
+    dish = Meals.get_meal_dish!(id)
+    changeset = Meals.change_meal_dish(dish, params)
 
     if changeset.valid? do
-      {:ok, _} = Meals.update_dish(dish, params)
+      {:ok, _} = Meals.update_meal_dish(dish, params)
       {:noreply, socket |> update(:invalid, &Map.delete(&1, dish.id)) |> load()}
     else
       form = to_form(%{changeset | action: :validate}, id: form_id(dish))
@@ -92,14 +95,14 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    {:ok, _} = id |> Meals.get_dish!() |> Meals.delete_dish()
+    {:ok, _} = id |> Meals.get_meal_dish!() |> Meals.delete_meal_dish()
     {:noreply, socket |> update(:invalid, &Map.delete(&1, String.to_integer(id))) |> load()}
   end
 
-  defp form_id(%Dish{id: id}), do: "dish-#{id}"
+  defp form_id(%MealDish{id: id}), do: "dish-#{id}"
 
-  defp card_form(%Dish{} = d, invalid) do
-    Map.get(invalid, d.id) || to_form(Meals.change_dish(d), id: form_id(d))
+  defp card_form(%MealDish{} = d, invalid) do
+    Map.get(invalid, d.id) || to_form(Meals.change_meal_dish(d), id: form_id(d))
   end
 
   defp oven_options(kitchen),
@@ -268,7 +271,9 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   defp share_label(share) do
-    Enum.find_value(Dish.oven_share_options(), "", fn {l, v} -> v == (share || :third) && l end)
+    Enum.find_value(MealDish.oven_share_options(), "", fn {l, v} ->
+      v == (share || :third) && l
+    end)
   end
 
   # Keep tooltips on screen: anchor to the left/right edge near the ends of the strip.
@@ -421,7 +426,7 @@ defmodule CookingSchedulerWeb.PlanLive do
       class="pop-in rounded-2xl border border-base-300 bg-base-100/90 p-4 shadow-sm backdrop-blur transition hover:shadow-md"
     >
       <.form for={@form} id={@form.id <> "-form"} phx-change="update">
-        <input type="hidden" name="dish_id" value={@dish.id} />
+        <input type="hidden" name="meal_dish_id" value={@dish.id} />
 
         <div class="grid gap-x-6 gap-y-3 lg:grid-cols-[minmax(15rem,21rem)_1fr]">
           <%!-- left: what it is and when it happens --%>
@@ -504,7 +509,7 @@ defmodule CookingSchedulerWeb.PlanLive do
                 f={@form[:oven_share]}
                 label="Space"
                 type="select"
-                options={CookingScheduler.Meals.Dish.oven_share_options()}
+                options={CookingScheduler.Meals.MealDish.oven_share_options()}
               />
               <div class="col-span-2">
                 <.mini
@@ -581,7 +586,7 @@ defmodule CookingSchedulerWeb.PlanLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} wide>
+    <Layouts.app flash={@flash}>
       <.link
         navigate={~p"/"}
         class="mb-3 inline-flex items-center gap-1 text-sm text-base-content/60 hover:text-primary"
@@ -663,7 +668,7 @@ defmodule CookingSchedulerWeb.PlanLive do
             ]
           }
           class="btn btn-sm rounded-full"
-          phx-click="add_dish"
+          phx-click="add_meal_dish"
           phx-value-method={method}
         >
           <.icon name="hero-plus" class="size-4" /> {label}

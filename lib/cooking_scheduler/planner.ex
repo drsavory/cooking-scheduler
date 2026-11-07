@@ -15,7 +15,7 @@ defmodule CookingScheduler.Planner do
   """
 
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.Dish
+  alias CookingScheduler.Meals.MealDish
 
   # Two oven dishes can share an oven if their temperatures are this close (°C).
   @temp_tolerance 15
@@ -65,7 +65,7 @@ defmodule CookingScheduler.Planner do
   Returns one map per appliance that has something in it, in kitchen order:
   `%{appliance, capacity, peak, segments}`. Segments are consecutive stretches
   with constant load: `%{from, to, used, dishes}`. Ovens are measured in
-  `Dish.oven_units/1` against `Dish.oven_capacity/0`; rings and other
+  `MealDish.oven_units/1` against `MealDish.oven_capacity/0`; rings and other
   appliances hold one thing at a time (capacity 1).
   """
   def load(entries, kitchen) do
@@ -74,8 +74,11 @@ defmodule CookingScheduler.Planner do
     for app <- kitchen,
         mine = Enum.filter(placed, &(&1.resource.id == app.id)),
         mine != [] do
-      capacity = if app.kind == :oven, do: Dish.oven_capacity(), else: 1
-      weight = fn e -> if app.kind == :oven, do: Dish.oven_units(e.dish.oven_share), else: 1 end
+      capacity = if app.kind == :oven, do: MealDish.oven_capacity(), else: 1
+
+      weight = fn e ->
+        if app.kind == :oven, do: MealDish.oven_units(e.dish.oven_share), else: 1
+      end
 
       points = mine |> Enum.flat_map(&[&1.cook_at, &1.out_at]) |> Enum.uniq() |> Enum.sort()
 
@@ -93,9 +96,11 @@ defmodule CookingScheduler.Planner do
     end
   end
 
-  defp timeline(%Dish{} = d, serve) do
+  defp timeline(%MealDish{} = d, serve) do
     out = serve - d.rest_minutes
-    cook = out - total_minutes(d)
+    # Time added on the day (extra_minutes) extends the cook from when it went in; it must
+    # not drag the planned start (and so the prep slot) earlier.
+    cook = out - (total_minutes(d) - d.extra_minutes)
 
     %Entry{dish: d, serve_at: serve, out_at: out, cook_at: cook, prep_at: cook - d.prep_minutes}
   end
@@ -107,7 +112,7 @@ defmodule CookingScheduler.Planner do
   defp uses_equipment?(%Entry{dish: d}), do: total_minutes(d) > 0
 
   @doc "Time on the heat: cooking + buffer + any extra added on the day."
-  def total_minutes(%Dish{} = d), do: d.cook_minutes + d.buffer_minutes + d.extra_minutes
+  def total_minutes(%MealDish{} = d), do: d.cook_minutes + d.buffer_minutes + d.extra_minutes
 
   # ---- assignment -----------------------------------------------------------
 
@@ -239,13 +244,13 @@ defmodule CookingScheduler.Planner do
       stop: e.out_at,
       temp_c: temp_c,
       name: e.dish.name,
-      units: Dish.oven_units(e.dish.oven_share)
+      units: MealDish.oven_units(e.dish.oven_share)
     }
 
   # Would this dish, alongside everything already in the oven at the same time, not fit?
   defp over_capacity?(usage, key, e) do
     used = usage |> overlapping(key, e) |> Enum.map(& &1.units) |> Enum.sum()
-    used + Dish.oven_units(e.dish.oven_share) > Dish.oven_capacity()
+    used + MealDish.oven_units(e.dish.oven_share) > MealDish.oven_capacity()
   end
 
   defp overlapping(usage, key, e) do

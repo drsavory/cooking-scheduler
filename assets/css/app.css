@@ -101,6 +101,7 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+html { scrollbar-gutter: stable; }
 body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased; }
 
 

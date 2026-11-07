@@ -4,27 +4,27 @@ defmodule CookingSchedulerWeb.DishFormLive do
 
   alias CookingScheduler.{Duration, Meals}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.SavedDish
+  alias CookingScheduler.Meals.Dish
 
   @impl true
   def mount(_params, _session, socket) do
-    dish = %SavedDish{method: :oven, temp_unit: :gas_mark}
+    dish = %Dish{method: :oven, temp_unit: :gas_mark}
 
     {:ok,
      socket
      |> assign(:page_title, "New dish")
      |> assign(:dish, dish)
-     |> assign(:form, to_form(Meals.change_saved_dish(dish)))}
+     |> assign(:form, to_form(Meals.change_dish(dish)))}
   end
 
   @impl true
-  def handle_event("validate", %{"saved_dish" => params}, socket) do
-    form = socket.assigns.dish |> Meals.change_saved_dish(params) |> to_form(action: :validate)
+  def handle_event("validate", %{"dish" => params}, socket) do
+    form = socket.assigns.dish |> Meals.change_dish(params) |> to_form(action: :validate)
     {:noreply, assign(socket, :form, form)}
   end
 
-  def handle_event("save", %{"saved_dish" => params}, socket) do
-    case Meals.create_saved_dish(params) do
+  def handle_event("save", %{"dish" => params}, socket) do
+    case Meals.create_dish(params) do
       {:ok, dish} -> {:noreply, push_navigate(socket, to: ~p"/dishes/#{dish.id}")}
       {:error, changeset} -> {:noreply, assign(socket, :form, to_form(changeset))}
     end
@@ -83,7 +83,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
           <.tag_picker
             field={@form[:tags]}
             custom={@form[:custom_tags]}
-            suggested={SavedDish.suggested_tags()}
+            suggested={Dish.suggested_tags()}
           />
         </div>
 
@@ -109,7 +109,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
           field={@form[:oven_share]}
           type="select"
           label="Oven space"
-          options={CookingScheduler.Meals.Dish.oven_share_options()}
+          options={CookingScheduler.Meals.MealDish.oven_share_options()}
         />
 
         <.input

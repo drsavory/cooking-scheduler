@@ -15,7 +15,7 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     %{left: left, grill: grill, meal: meal, path: ~p"/meals/#{meal.id}/plan"}
   end
 
-  defp dishes(meal), do: Meals.list_dishes(meal)
+  defp dishes(meal), do: Meals.list_meal_dishes(meal)
 
   test "starts empty with an offer to load last year's menu", %{
     conn: conn,
@@ -67,11 +67,11 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
 
     lv
     |> form("#dish-#{dish.id}-form",
-      dish: %{name: "Nut roast", temp: "6", cook_minutes: "1h 10m", rest_minutes: "0:15"}
+      meal_dish: %{name: "Nut roast", temp: "6", cook_minutes: "1h 10m", rest_minutes: "0:15"}
     )
     |> render_change()
 
-    dish = Meals.get_dish!(dish.id)
+    dish = Meals.get_meal_dish!(dish.id)
     assert %{name: "Nut roast", temp: 6.0, cook_minutes: 70, rest_minutes: 15} = dish
   end
 
@@ -80,9 +80,11 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     lv |> element(~s|#add-dish button[phx-value-method="oven"]|) |> render_click()
     [dish] = dishes(meal)
 
-    html = lv |> form("#dish-#{dish.id}-form", dish: %{cook_minutes: "soon"}) |> render_change()
+    html =
+      lv |> form("#dish-#{dish.id}-form", meal_dish: %{cook_minutes: "soon"}) |> render_change()
+
     assert html =~ "try 1:30"
-    assert Meals.get_dish!(dish.id).cook_minutes == 60
+    assert Meals.get_meal_dish!(dish.id).cook_minutes == 60
   end
 
   test "hob dishes get individual rings; running out is flagged", %{conn: conn, path: path} do

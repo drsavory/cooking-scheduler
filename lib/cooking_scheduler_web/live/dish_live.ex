@@ -8,14 +8,14 @@ defmodule CookingSchedulerWeb.DishLive do
 
   alias CookingScheduler.{Duration, Kitchen, Meals, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.{Dish, DishIngredient, SavedDish}
+  alias CookingScheduler.Meals.{MealDish, DishIngredient, Dish}
 
   @impl true
   def mount(%{"meal_id" => meal_id, "id" => id} = params, _session, socket) do
     meal = Meals.get_meal!(meal_id)
-    dish = Meals.get_dish!(id)
+    dish = Meals.get_meal_dish!(id)
 
-    if dish.meal_id != meal.id, do: raise(Ecto.NoResultsError, queryable: Dish)
+    if dish.meal_id != meal.id, do: raise(Ecto.NoResultsError, queryable: MealDish)
 
     back =
       if params["from"] == "cook",
@@ -29,7 +29,7 @@ defmodule CookingSchedulerWeb.DishLive do
   end
 
   def mount(%{"id" => id}, _session, socket) do
-    dish = Meals.get_saved_dish!(id)
+    dish = Meals.get_dish!(id)
 
     {:ok, socket |> assign(:kitchen, []) |> setup(dish, {~p"/", "All dishes"}, nil)}
   end
@@ -51,14 +51,14 @@ defmodule CookingSchedulerWeb.DishLive do
     |> assign(:dish_form, to_form(change(dish, %{}), as: :dish))
   end
 
+  defp change(%MealDish{} = dish, attrs), do: Meals.change_meal_dish(dish, attrs)
   defp change(%Dish{} = dish, attrs), do: Meals.change_dish(dish, attrs)
-  defp change(%SavedDish{} = dish, attrs), do: Meals.change_saved_dish(dish, attrs)
 
-  defp update_dish(%Dish{} = dish, attrs), do: Meals.update_dish(dish, attrs)
-  defp update_dish(%SavedDish{} = dish, attrs), do: Meals.update_saved_dish(dish, attrs)
+  defp update_meal_dish(%MealDish{} = dish, attrs), do: Meals.update_meal_dish(dish, attrs)
+  defp update_meal_dish(%Dish{} = dish, attrs), do: Meals.update_dish(dish, attrs)
 
+  defp reload(%MealDish{id: id}), do: Meals.get_meal_dish!(id)
   defp reload(%Dish{id: id}), do: Meals.get_dish!(id)
-  defp reload(%SavedDish{id: id}), do: Meals.get_saved_dish!(id)
 
   defp load_ingredients(socket) do
     socket
@@ -84,7 +84,7 @@ defmodule CookingSchedulerWeb.DishLive do
   def handle_event("save", %{"dish" => params}, %{assigns: %{editing: true}} = socket) do
     dish = socket.assigns.dish
 
-    case update_dish(dish, params) do
+    case update_meal_dish(dish, params) do
       {:ok, _} ->
         {:noreply, socket |> assign(:editing, false) |> assign_dish(reload(dish))}
 
@@ -140,7 +140,7 @@ defmodule CookingSchedulerWeb.DishLive do
   defp appliance_options(kitchen),
     do: [{"Choose…", ""} | for(a <- kitchen, a.kind == :other, do: {a.name, a.id})]
 
-  defp meal_dish?(%Dish{}), do: true
+  defp meal_dish?(%MealDish{}), do: true
   defp meal_dish?(_), do: false
 
   defp field_value(v) when is_integer(v), do: Duration.format(v)
@@ -231,7 +231,7 @@ defmodule CookingSchedulerWeb.DishLive do
               id={@dish_form[:name].id}
               name={@dish_form[:name].name}
               value={@dish_form[:name].value}
-              aria-label="Dish name"
+              aria-label="MealDish name"
               phx-debounce="400"
               readonly={not @editing}
               class={[
@@ -279,7 +279,7 @@ defmodule CookingSchedulerWeb.DishLive do
           <.tag_picker
             field={@dish_form[:tags]}
             custom={@dish_form[:custom_tags]}
-            suggested={SavedDish.suggested_tags()}
+            suggested={Dish.suggested_tags()}
             locked={not @editing}
           />
         </section>
@@ -310,7 +310,7 @@ defmodule CookingSchedulerWeb.DishLive do
                 f={@dish_form[:oven_share]}
                 label="Oven space"
                 type="select"
-                options={CookingScheduler.Meals.Dish.oven_share_options()}
+                options={CookingScheduler.Meals.MealDish.oven_share_options()}
               />
               <.box
                 :if={meal_dish?(@dish)}

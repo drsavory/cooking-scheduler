@@ -3,7 +3,7 @@ defmodule CookingScheduler.CookingTest do
 
   alias CookingScheduler.{Cooking, Planner}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.Dish
+  alias CookingScheduler.Meals.MealDish
 
   @serve 13 * 60 + 30
   @oven %Appliance{
@@ -17,7 +17,7 @@ defmodule CookingScheduler.CookingTest do
 
   defp dish(attrs) do
     struct(
-      %Dish{
+      %MealDish{
         id: 1,
         name: "Turkey",
         method: :oven,

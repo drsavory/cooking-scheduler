@@ -2,7 +2,7 @@ defmodule CookingScheduler.PlannerTest do
   use ExUnit.Case, async: true
 
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.Dish
+  alias CookingScheduler.Meals.MealDish
   alias CookingScheduler.Planner
 
   @serve 13 * 60 + 30
@@ -14,9 +14,9 @@ defmodule CookingScheduler.PlannerTest do
 
   defp dish(id, attrs) do
     struct(
-      %Dish{
+      %MealDish{
         id: id,
-        name: "Dish #{id}",
+        name: "MealDish #{id}",
         method: :oven,
         temp: 4.0,
         temp_unit: :gas_mark,

@@ -22,7 +22,10 @@ defmodule CookingSchedulerWeb.DishLiveTest do
   setup do
     {:ok, _} = Kitchen.add_oven(:celsius)
     {:ok, meal} = Meals.create_meal(%{name: "Christmas"})
-    {:ok, dish} = Meals.create_dish(meal, attrs(%{notes: "Par-boil first", rest_minutes: 10}))
+
+    {:ok, dish} =
+      Meals.create_meal_dish(meal, attrs(%{notes: "Par-boil first", rest_minutes: 10}))
+
     %{meal: meal, dish: dish}
   end
 
@@ -37,7 +40,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
 
   test "shows which site a recipe link is from", %{conn: conn, meal: meal} do
     {:ok, dish} =
-      Meals.create_dish(
+      Meals.create_meal_dish(
         meal,
         attrs(%{name: "Turkey", link: "https://www.bbcgoodfood.com/turkey"})
       )
@@ -55,7 +58,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
 
     # a stray change or submit while locked saves nothing
     render_submit(lv, "save", %{"dish" => %{"name" => "Sneaky"}})
-    assert Meals.get_dish!(dish.id).name == "Roast potatoes"
+    assert Meals.get_meal_dish!(dish.id).name == "Roast potatoes"
 
     lv |> element("#edit-dish") |> render_click()
     assert has_element?(lv, "#save-dish")
@@ -72,12 +75,12 @@ defmodule CookingSchedulerWeb.DishLiveTest do
     ]
 
     lv |> form("#dish-form", change) |> render_change()
-    assert Meals.get_dish!(dish.id).name == "Roast potatoes"
+    assert Meals.get_meal_dish!(dish.id).name == "Roast potatoes"
 
     lv |> form("#dish-form", change) |> render_submit()
 
     assert %{name: "Crispy potatoes", temp: 210.0, cook_minutes: 75, notes: "Hot fat"} =
-             Meals.get_dish!(dish.id)
+             Meals.get_meal_dish!(dish.id)
 
     assert has_element?(lv, "#edit-dish")
     refute has_element?(lv, "#save-dish")
@@ -91,7 +94,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
     lv |> element("#cancel-edit") |> render_click()
 
     assert has_element?(lv, ~s|#dish-form input[name="dish[name]"][value="Roast potatoes"]|)
-    assert Meals.get_dish!(dish.id).name == "Roast potatoes"
+    assert Meals.get_meal_dish!(dish.id).name == "Roast potatoes"
   end
 
   test "a bad value shows an error and won't save", %{conn: conn, meal: meal, dish: dish} do
@@ -102,16 +105,16 @@ defmodule CookingSchedulerWeb.DishLiveTest do
 
     assert html =~ "text-error"
     assert has_element?(lv, "#save-dish")
-    assert Meals.get_dish!(dish.id).cook_minutes == 60
+    assert Meals.get_meal_dish!(dish.id).cook_minutes == 60
   end
 
   test "edits a library dish in place", %{conn: conn} do
-    {:ok, saved} = Meals.create_saved_dish(attrs(%{name: "Gravy"}))
+    {:ok, saved} = Meals.create_dish(attrs(%{name: "Gravy"}))
     {:ok, lv, _} = live(conn, ~p"/dishes/#{saved.id}")
 
     lv |> element("#edit-dish") |> render_click()
     lv |> form("#dish-form", dish: %{rest_minutes: "5"}) |> render_submit()
-    assert Meals.get_saved_dish!(saved.id).rest_minutes == 5
+    assert Meals.get_dish!(saved.id).rest_minutes == 5
   end
 
   test "comes back to the cook screen when opened from it", %{conn: conn, meal: meal, dish: dish} do
@@ -158,7 +161,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
   end
 
   test "views and edits ingredients of a library dish", %{conn: conn} do
-    {:ok, saved} = Meals.create_saved_dish(attrs(%{name: "Gravy"}))
+    {:ok, saved} = Meals.create_dish(attrs(%{name: "Gravy"}))
     {:ok, lv, _} = live(conn, ~p"/dishes/#{saved.id}")
 
     assert has_element?(lv, ~s|#dish-form input[name="dish[name]"][value="Gravy"]|)
@@ -169,7 +172,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
   end
 
   test "dishes link here from home, plan and cook", %{conn: conn, meal: meal, dish: dish} do
-    {:ok, saved} = Meals.create_saved_dish(attrs(%{name: "Gravy"}))
+    {:ok, saved} = Meals.create_dish(attrs(%{name: "Gravy"}))
 
     {:ok, home, _} = live(conn, ~p"/")
     assert has_element?(home, ~s|#view-dish-#{saved.id}[href="/dishes/#{saved.id}"]|)
@@ -228,7 +231,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       meal: meal,
       dish: dish
     } do
-      {:ok, other} = Meals.create_dish(meal, attrs(%{name: "Parsnips"}))
+      {:ok, other} = Meals.create_meal_dish(meal, attrs(%{name: "Parsnips"}))
       {:ok, _} = Meals.add_ingredient(dish, "Butter", "50", "g")
       {:ok, _} = Meals.add_ingredient(other, " butter ", "20", "g")
 
@@ -250,7 +253,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       {:ok, _} = Meals.add_ingredient(dish, "Potatoes", "2", "kg")
 
       {:ok, next} = Meals.create_meal_from(meal)
-      [copy] = Meals.list_dishes(next)
+      [copy] = Meals.list_meal_dishes(next)
       assert [%{amount: 2.0, unit: :kg}] = Meals.list_dish_ingredients(copy)
 
       # editing the copy leaves the original meal alone
@@ -259,10 +262,10 @@ defmodule CookingSchedulerWeb.DishLiveTest do
 
       # ...and the library dish picked up the ingredients, so a fresh meal gets them too
       saved =
-        Meals.get_saved_dish!(dish |> then(&Meals.get_dish!(&1.id)) |> Map.fetch!(:saved_dish_id))
+        Meals.get_dish!(dish |> then(&Meals.get_meal_dish!(&1.id)) |> Map.fetch!(:dish_id))
 
       {:ok, fresh} = Meals.create_meal(%{name: "Fresh"})
-      {:ok, added} = Meals.add_saved_dish(fresh, saved)
+      {:ok, added} = Meals.add_dish_to_meal(fresh, saved)
       assert length(Meals.list_dish_ingredients(added)) >= 1
     end
 
@@ -270,26 +273,26 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       meal: meal,
       dish: dish
     } do
-      saved = Meals.get_saved_dish!(Meals.get_dish!(dish.id).saved_dish_id)
+      saved = Meals.get_dish!(Meals.get_meal_dish!(dish.id).dish_id)
       {:ok, cooking} = Meals.create_meal_from(meal)
-      [cooked] = Meals.list_dishes(cooking)
+      [cooked] = Meals.list_meal_dishes(cooking)
       {:ok, _} = Meals.start_cooking(cooked, 600)
 
       {:ok, _} = Meals.add_ingredient(saved, "Goose fat", "2", "tbsp")
 
       assert [%{ingredient: %{name: "Goose fat"}, amount: 2.0}] =
-               Meals.list_dish_ingredients(Meals.get_dish!(dish.id))
+               Meals.list_dish_ingredients(Meals.get_meal_dish!(dish.id))
 
-      assert Meals.list_dish_ingredients(Meals.get_dish!(cooked.id)) == []
+      assert Meals.list_dish_ingredients(Meals.get_meal_dish!(cooked.id)) == []
 
       [di] = Meals.list_dish_ingredients(saved)
       {:ok, _} = Meals.remove_ingredient(saved, di)
-      assert Meals.list_dish_ingredients(Meals.get_dish!(dish.id)) == []
+      assert Meals.list_dish_ingredients(Meals.get_meal_dish!(dish.id)) == []
     end
   end
 
   test "tags on a saved dish can be edited", %{conn: conn} do
-    {:ok, saved} = Meals.create_saved_dish(%{name: "Sprouts", method: :appliance, tags: ["veg"]})
+    {:ok, saved} = Meals.create_dish(%{name: "Sprouts", method: :appliance, tags: ["veg"]})
     {:ok, lv, _} = live(conn, ~p"/dishes/#{saved.id}")
 
     assert has_element?(lv, "#tag-option-veg")
@@ -298,6 +301,6 @@ defmodule CookingSchedulerWeb.DishLiveTest do
     lv |> element("#edit-dish") |> render_click()
     lv |> form("#dish-form", dish: %{tags: ["veg", "side"]}) |> render_submit()
 
-    assert Meals.get_saved_dish!(saved.id).tags == ["veg", "side"]
+    assert Meals.get_dish!(saved.id).tags == ["veg", "side"]
   end
 end

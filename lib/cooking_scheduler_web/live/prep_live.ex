@@ -13,7 +13,7 @@ defmodule CookingSchedulerWeb.PrepLive do
   defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
 
   defp load(socket, %Meal{} = meal) do
-    dishes = Meals.list_dishes(meal)
+    dishes = Meals.list_meal_dishes(meal)
     entries = Planner.plan(dishes, Meal.serve_minutes(meal), Kitchen.list_appliances())
 
     ingredients =
@@ -40,13 +40,13 @@ defmodule CookingSchedulerWeb.PrepLive do
   end
 
   def handle_event("toggle_ingredients", %{"id" => id}, socket) do
-    dish = Meals.get_dish!(id)
+    dish = Meals.get_meal_dish!(id)
     {:ok, _} = Meals.set_ingredients_in(dish, !dish.ingredients_in)
     {:noreply, load(socket)}
   end
 
   def handle_event("toggle_prepped", %{"id" => id}, socket) do
-    dish = Meals.get_dish!(id)
+    dish = Meals.get_meal_dish!(id)
     {:ok, _} = Meals.set_prepped(dish, !dish.prepped)
     {:noreply, load(socket)}
   end
@@ -69,7 +69,7 @@ defmodule CookingSchedulerWeb.PrepLive do
   attr :done, :boolean, required: true
   attr :label, :string, required: true
   attr :event, :string, required: true
-  attr :dish_id, :integer, required: true
+  attr :meal_dish_id, :integer, required: true
   slot :inner_block, required: true
 
   defp tick(assigns) do
@@ -81,7 +81,7 @@ defmodule CookingSchedulerWeb.PrepLive do
       aria-checked={to_string(@done)}
       aria-label={@label}
       phx-click={@event}
-      phx-value-id={@dish_id}
+      phx-value-id={@meal_dish_id}
       class={[
         "group flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition",
         @done && "border-success/40 bg-success/10",
@@ -197,7 +197,7 @@ defmodule CookingSchedulerWeb.PrepLive do
                 done={e.dish.ingredients_in}
                 label={"All ingredients in for #{e.dish.name}"}
                 event="toggle_ingredients"
-                dish_id={e.dish.id}
+                meal_dish_id={e.dish.id}
               >
                 <span class="font-semibold">{e.dish.name}</span>
                 <span
@@ -254,7 +254,7 @@ defmodule CookingSchedulerWeb.PrepLive do
                 done={e.dish.prepped}
                 label={"#{e.dish.name} prepped"}
                 event="toggle_prepped"
-                dish_id={e.dish.id}
+                meal_dish_id={e.dish.id}
               >
                 <span class="font-semibold">{e.dish.name}</span>
                 <span class="block text-sm text-base-content/60">

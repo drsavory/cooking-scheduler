@@ -40,12 +40,12 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
       [meal] = Meals.list_meals()
       assert to == "/meals/#{meal.id}/plan"
-      assert Meals.list_dishes(meal) == []
+      assert Meals.list_meal_dishes(meal) == []
     end
 
     test "a meal can be started from any previous one, not just the latest", %{conn: conn} do
       {:ok, old} = Meals.create_meal(%{name: "Christmas 2024", date: ~D[2024-12-25]})
-      {:ok, _} = Meals.add_dish(old, :ring, [])
+      {:ok, _} = Meals.add_meal_dish(old, :ring, [])
       {:ok, _newer} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
 
       {:ok, lv, _} = live(conn, ~p"/")
@@ -56,14 +56,14 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       new = Meals.list_meals() |> Enum.find(&(to == "/meals/#{&1.id}/plan"))
       assert new.id != old.id
       assert new.name == "Christmas 2025"
-      assert length(Meals.list_dishes(new)) == 1
+      assert length(Meals.list_meal_dishes(new)) == 1
     end
 
     test "lists meals with their stats and plan/cook links for each", %{conn: conn} do
       {:ok, a} = Meals.create_meal(%{name: "Christmas 2024", date: ~D[2024-12-25]})
       {:ok, b} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
-      {:ok, _} = Meals.add_dish(a, :ring, [])
-      {:ok, _} = Meals.add_dish(a, :ring, [])
+      {:ok, _} = Meals.add_meal_dish(a, :ring, [])
+      {:ok, _} = Meals.add_meal_dish(a, :ring, [])
 
       {:ok, lv, _} = live(conn, ~p"/")
 
@@ -78,7 +78,7 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
     test "a meal that's being cooked can be finished or reset from home", %{conn: conn} do
       {:ok, m} = Meals.create_meal(%{name: "Dinner"})
-      {:ok, d} = Meals.create_dish(m, %{name: "Roast", method: :appliance, cook_minutes: 60})
+      {:ok, d} = Meals.create_meal_dish(m, %{name: "Roast", method: :appliance, cook_minutes: 60})
       {:ok, _} = Meals.start_cooking(d, 600)
 
       {:ok, lv, html} = live(conn, ~p"/")
@@ -91,7 +91,7 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       confirm_dialog(lv, "reset-meal-#{m.id}")
       refute has_element?(lv, "#reset-meal-#{m.id}")
       assert has_element?(lv, "#meal-#{m.id}", "Prepping")
-      assert Meals.get_dish!(d.id).cook_started_at == nil
+      assert Meals.get_meal_dish!(d.id).cook_started_at == nil
     end
 
     test "a planning meal can be moved to prepping and back", %{conn: conn} do
@@ -111,7 +111,7 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
     end
 
     test "lists dishes and can delete one", %{conn: conn} do
-      {:ok, d} = Meals.create_saved_dish(%{name: "Gravy", method: :appliance})
+      {:ok, d} = Meals.create_dish(%{name: "Gravy", method: :appliance})
       {:ok, lv, _} = live(conn, ~p"/")
 
       assert has_element?(lv, "#dish-#{d.id}", "Gravy")
@@ -121,9 +121,9 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
     test "dishes show their tags and can be filtered by tag", %{conn: conn} do
       {:ok, beef} =
-        Meals.create_saved_dish(%{name: "Beef", method: :appliance, tags: ["main", "protein"]})
+        Meals.create_dish(%{name: "Beef", method: :appliance, tags: ["main", "protein"]})
 
-      {:ok, peas} = Meals.create_saved_dish(%{name: "Peas", method: :appliance, tags: ["veg"]})
+      {:ok, peas} = Meals.create_dish(%{name: "Peas", method: :appliance, tags: ["veg"]})
       {:ok, lv, _} = live(conn, ~p"/")
 
       assert has_element?(lv, "#dish-tags-#{beef.id}", "protein")

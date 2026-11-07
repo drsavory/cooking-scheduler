@@ -9,7 +9,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     {:ok, meal} = Meals.create_meal(%{name: "Sunday lunch"})
 
     {:ok, with_prep} =
-      Meals.create_dish(meal, %{
+      Meals.create_meal_dish(meal, %{
         name: "Potatoes",
         method: :ring,
         ring_size: :large,
@@ -18,7 +18,12 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
       })
 
     {:ok, no_prep} =
-      Meals.create_dish(meal, %{name: "Gravy", method: :ring, ring_size: :small, cook_minutes: 10})
+      Meals.create_meal_dish(meal, %{
+        name: "Gravy",
+        method: :ring,
+        ring_size: :small,
+        cook_minutes: 10
+      })
 
     {:ok, _} = Meals.add_ingredient(with_prep, "Potatoes", 1, :kg)
     %{meal: meal, with_prep: with_prep, no_prep: no_prep}
@@ -54,19 +59,19 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
 
     lv |> element("#tick-ingredients-#{p.id}") |> render_click()
     lv |> element("#tick-prepped-#{p.id}") |> render_click()
-    assert Meals.get_dish!(p.id).ingredients_in
-    assert Meals.get_dish!(p.id).prepped
+    assert Meals.get_meal_dish!(p.id).ingredients_in
+    assert Meals.get_meal_dish!(p.id).prepped
     assert has_element?(lv, "#prep-progress", "2 of 3 done")
 
     lv |> element("#tick-prepped-#{p.id}") |> render_click()
-    refute Meals.get_dish!(p.id).prepped
+    refute Meals.get_meal_dish!(p.id).prepped
   end
 
   test "everything's in ticks every dish", %{conn: conn, meal: meal, with_prep: p, no_prep: g} do
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
     lv |> element("#all-ingredients-in") |> render_click()
-    assert Meals.get_dish!(p.id).ingredients_in
-    assert Meals.get_dish!(g.id).ingredients_in
+    assert Meals.get_meal_dish!(p.id).ingredients_in
+    assert Meals.get_meal_dish!(g.id).ingredients_in
   end
 
   test "plan screen leads to prep", %{conn: conn, meal: meal} do
@@ -115,7 +120,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
 
     # ticks belong to the meal
     {:ok, other} = Meals.create_meal(%{name: "Other"})
-    {:ok, od} = Meals.create_dish(other, %{name: "Mash", method: :ring, ring_size: :small})
+    {:ok, od} = Meals.create_meal_dish(other, %{name: "Mash", method: :ring, ring_size: :small})
     {:ok, _} = Meals.add_ingredient(od, "Onion", 1)
     assert [%{bought?: false}] = Meals.shopping_list(other)
 
@@ -139,21 +144,21 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
 
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
     lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
-    refute Meals.get_dish!(p.id).ingredients_in
+    refute Meals.get_meal_dish!(p.id).ingredients_in
 
     lv |> element("#tick-shopping-#{potatoes.ingredient.id}") |> render_click()
-    assert Meals.get_dish!(p.id).ingredients_in
-    refute Meals.get_dish!(g.id).ingredients_in
+    assert Meals.get_meal_dish!(p.id).ingredients_in
+    refute Meals.get_meal_dish!(g.id).ingredients_in
 
     lv |> element("#tick-shopping-#{stock.ingredient.id}") |> render_click()
-    assert Meals.get_dish!(g.id).ingredients_in
+    assert Meals.get_meal_dish!(g.id).ingredients_in
 
     lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
-    refute Meals.get_dish!(p.id).ingredients_in
-    assert Meals.get_dish!(g.id).ingredients_in
+    refute Meals.get_meal_dish!(p.id).ingredients_in
+    assert Meals.get_meal_dish!(g.id).ingredients_in
 
     lv |> element("#clear-bought") |> render_click()
-    refute Meals.get_dish!(g.id).ingredients_in
+    refute Meals.get_meal_dish!(g.id).ingredients_in
   end
 
   test "dishes with no ingredients are left alone", %{meal: meal, with_prep: p, no_prep: g} do
@@ -163,7 +168,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
 
     :ok = Meals.set_bought(meal, onion.ingredient.id, true)
     :ok = Meals.clear_bought(meal)
-    assert Meals.get_dish!(g.id).ingredients_in
+    assert Meals.get_meal_dish!(g.id).ingredients_in
   end
 
   test "each dish shows which ingredients are in and which are missing", %{
