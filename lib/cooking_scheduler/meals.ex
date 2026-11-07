@@ -6,7 +6,7 @@ defmodule CookingScheduler.Meals do
 
   import Ecto.Query
   alias CookingScheduler.Repo
-  alias CookingScheduler.Meals.{Dish, Meal, SavedDish, Starter}
+  alias CookingScheduler.Meals.{Dish, DishIngredient, Ingredient, Meal, SavedDish, Starter}
 
   @default_serve ~T[13:30:00]
 
@@ -91,7 +91,8 @@ defmodule CookingScheduler.Meals do
   def copy_dishes(%Meal{} = source, %Meal{} = target) do
     for dish <- list_dishes(source) do
       fields = dish |> Map.take(@copied) |> Map.put(:meal_id, target.id)
-      Repo.insert!(struct(Dish, fields))
+      copy = Repo.insert!(struct(Dish, fields))
+      copy_ingredients({:dish, dish.id}, {:dish, copy.id})
     end
 
     :ok
@@ -308,9 +309,13 @@ defmodule CookingScheduler.Meals do
   def add_saved_dish(%Meal{} = meal, %SavedDish{} = saved) do
     attrs = Map.take(saved, SavedDish.template_fields())
 
-    %Dish{meal_id: meal.id, saved_dish_id: saved.id}
-    |> Dish.changeset(attrs)
-    |> Repo.insert()
+    with {:ok, dish} <-
+           %Dish{meal_id: meal.id, saved_dish_id: saved.id}
+           |> Dish.changeset(attrs)
+           |> Repo.insert() do
+      copy_ingredients({:saved, saved.id}, {:dish, dish.id})
+      {:ok, dish}
+    end
   end
 
   @doc "Every meal each saved dish has been used in: `%{saved_dish_id => [{meal, dish}]}`, newest meal first."
@@ -364,4 +369,131 @@ defmodule CookingScheduler.Meals do
 
     :ok
   end
+
+  # ---- ingredients -------------------------------------------------------------
+
+  @doc "Every known ingredient, A to Z."
+  def list_ingredients, do: Repo.all(from i in Ingredient, order_by: fragment("lower(?)", i.name))
+
+  @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal or saved dish."
+  def list_dish_ingredients(%Dish{id: id}), do: ingredients_for({:dish, id})
+  def list_dish_ingredients(%SavedDish{id: id}), do: ingredients_for({:saved, id})
+
+  defp ingredients_for(owner) do
+    Repo.all(
+      from di in owner_query(owner),
+        join: i in assoc(di, :ingredient),
+        order_by: fragment("lower(?)", i.name),
+        preload: [ingredient: i]
+    )
+  end
+
+  @doc """
+  Adds an ingredient to a dish, creating it in the shared list if it's new (names match
+  regardless of case). `amount` is a number or text like "50" or "1/2"; `unit` is one of
+  `DishIngredient.units/0` (none means a count). Adding one the dish already has just
+  updates the amount.
+
+  Returns `{:error, :name}` or `{:error, :amount}` when either can't be used.
+  """
+  def add_ingredient(dish, name, amount \\ nil, unit \\ nil) do
+    owner = owner(dish)
+
+    with {:ok, amount} <- parse_amount(amount),
+         {:ok, ingredient} <- find_or_create_ingredient(name) do
+      # a unit means nothing without an amount
+      attrs = [
+        ingredient_id: ingredient.id,
+        amount: amount,
+        unit: if(amount, do: DishIngredient.parse_unit(unit))
+      ]
+
+      result =
+        case Repo.one(from di in owner_query(owner), where: di.ingredient_id == ^ingredient.id) do
+          nil ->
+            Repo.insert(struct(DishIngredient, [{owner_key(owner), elem(owner, 1)} | attrs]))
+
+          existing ->
+            existing |> Ecto.Changeset.change(Map.new(attrs)) |> Repo.update()
+        end
+
+      with {:ok, di} <- result do
+        sync_ingredients_to_library(dish)
+        {:ok, di}
+      end
+    end
+  end
+
+  defp parse_amount(amount) do
+    case DishIngredient.parse_amount(amount) do
+      :error -> {:error, :amount}
+      ok -> ok
+    end
+  end
+
+  @doc "Takes an ingredient off a dish. The ingredient stays in the shared list."
+  def remove_ingredient(dish, %DishIngredient{} = di) do
+    result = Repo.delete(di)
+    sync_ingredients_to_library(dish)
+    result
+  end
+
+  defp find_or_create_ingredient(name) do
+    changeset = Ingredient.changeset(%Ingredient{}, %{name: name})
+
+    case Ecto.Changeset.fetch_change(changeset, :name) do
+      {:ok, trimmed} when trimmed != "" ->
+        key = String.downcase(trimmed)
+
+        case Repo.one(from i in Ingredient, where: fragment("lower(?)", i.name) == ^key) do
+          nil -> Repo.insert(changeset)
+          existing -> {:ok, existing}
+        end
+
+      _ ->
+        {:error, :name}
+    end
+  end
+
+  defp owner(%Dish{id: id}), do: {:dish, id}
+  defp owner(%SavedDish{id: id}), do: {:saved, id}
+
+  defp owner_key({:dish, _}), do: :dish_id
+  defp owner_key({:saved, _}), do: :saved_dish_id
+
+  defp owner_query({:dish, id}), do: from(di in DishIngredient, where: di.dish_id == ^id)
+  defp owner_query({:saved, id}), do: from(di in DishIngredient, where: di.saved_dish_id == ^id)
+
+  defp copy_ingredients(from_owner, to_owner) do
+    for di <- Repo.all(owner_query(from_owner)) do
+      Repo.insert!(
+        struct(DishIngredient, [
+          {owner_key(to_owner), elem(to_owner, 1)},
+          ingredient_id: di.ingredient_id,
+          amount: di.amount,
+          unit: di.unit
+        ])
+      )
+    end
+
+    :ok
+  end
+
+  # Same rule as the other details: ingredient edits on a meal dish flow back to its library
+  # dish (unless it's a placeholder or the meal has been started). Editing a library dish
+  # itself changes nothing else.
+  defp sync_ingredients_to_library(%Dish{} = dish) do
+    dish = Repo.get!(Dish, dish.id)
+
+    if library_worthy?(dish) and not started?(dish.meal_id) do
+      sync_to_library(dish)
+      dish = Repo.get!(Dish, dish.id)
+      Repo.delete_all(owner_query({:saved, dish.saved_dish_id}))
+      copy_ingredients({:dish, dish.id}, {:saved, dish.saved_dish_id})
+    end
+
+    :ok
+  end
+
+  defp sync_ingredients_to_library(%SavedDish{}), do: :ok
 end

@@ -270,6 +270,15 @@ defmodule CookingSchedulerWeb.PlanLive do
               <span :if={@dish.prepped} class="text-success" title="Prepped">
                 <.icon name="hero-check-circle-micro" class="size-4" />
               </span>
+              <.link
+                id={"view-dish-#{@dish.id}"}
+                navigate={~p"/meals/#{@dish.meal_id}/dishes/#{@dish.id}"}
+                class="btn btn-xs btn-circle btn-ghost"
+                aria-label={"Details and ingredients for #{@dish.name}"}
+                title="Details & ingredients"
+              >
+                <.icon name="hero-eye" class="size-4" />
+              </.link>
               <button
                 type="button"
                 class="btn btn-xs btn-circle btn-ghost"

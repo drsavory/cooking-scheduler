@@ -312,7 +312,7 @@ defmodule CookingSchedulerWeb.HomeLive do
             :for={{d, i} <- Enum.with_index(@saved)}
             id={"dish-#{d.id}"}
             style={stagger(i)}
-            class="glass glass-lift pop-in group flex items-center gap-3 rounded-2xl p-3 pr-2"
+            class="glass glass-lift pop-in group relative flex items-center gap-3 rounded-2xl p-3 pr-2"
           >
             <span class={[
               "grid size-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-md",
@@ -321,7 +321,13 @@ defmodule CookingSchedulerWeb.HomeLive do
               <.icon name={method_icon(d.method)} class="size-5" />
             </span>
             <div class="min-w-0 flex-1">
-              <div class="truncate font-semibold">{d.name}</div>
+              <.link
+                id={"view-dish-#{d.id}"}
+                navigate={~p"/dishes/#{d.id}"}
+                class="block truncate font-semibold hover:text-primary after:absolute after:inset-0"
+              >
+                {d.name}
+              </.link>
               <div class="text-xs text-base-content/60">
                 {Duration.format(d.cook_minutes + d.buffer_minutes)} cook · {plural(
                   length(Map.get(@usage, d.id, [])),
@@ -330,13 +336,6 @@ defmodule CookingSchedulerWeb.HomeLive do
                 )}
               </div>
             </div>
-            <.link
-              navigate={~p"/dishes/#{d.id}/edit"}
-              class="btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus:opacity-100"
-              aria-label={"Edit #{d.name}"}
-            >
-              <.icon name="hero-pencil-square" class="size-4" />
-            </.link>
             <.confirm_button
               id={"delete-dish-#{d.id}"}
               title={"Delete #{d.name}?"}
@@ -344,7 +343,7 @@ defmodule CookingSchedulerWeb.HomeLive do
               confirm_label="Delete"
               tone={:danger}
               on_confirm={JS.push("delete_dish", value: %{id: d.id})}
-              class="btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-error focus:opacity-100"
+              class="relative z-10 btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-error focus:opacity-100"
               aria-label={"Delete #{d.name}"}
             >
               <.icon name="hero-trash" class="size-4" />

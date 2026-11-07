@@ -1,7 +1,7 @@
 defmodule CookingSchedulerWeb.CookLive do
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Clock, Cooking, Duration, Kitchen, Meals, Planner}
+  alias CookingScheduler.{Clock, Cooking, Duration, Kitchen, Meals, Planner, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
   alias CookingScheduler.Meals.Meal
 
@@ -196,6 +196,13 @@ defmodule CookingSchedulerWeb.CookLive do
           <span :if={@dish.extra_minutes > 0} class="badge badge-warning badge-soft">
             +{@dish.extra_minutes}m added
           </span>
+          <.link
+            id={"details-#{@dish.id}-#{@task.kind}"}
+            navigate={~p"/meals/#{@dish.meal_id}/dishes/#{@dish.id}?from=cook"}
+            class="badge badge-ghost hover:badge-primary"
+          >
+            <.icon name="hero-list-bullet-micro" class="size-3.5" /> Details
+          </.link>
           <a
             :if={@dish.link not in [nil, ""]}
             href={@dish.link}
@@ -203,7 +210,8 @@ defmodule CookingSchedulerWeb.CookLive do
             rel="noopener"
             class="badge badge-ghost hover:badge-primary"
           >
-            <.icon name="hero-arrow-top-right-on-square-micro" class="size-3.5" /> Recipe
+            <.icon name="hero-arrow-top-right-on-square-micro" class="size-3.5" />
+            Recipe<span :if={RecipeLink.host(@dish.link)}> · {RecipeLink.host(@dish.link)}</span>
           </a>
         </div>
         <p

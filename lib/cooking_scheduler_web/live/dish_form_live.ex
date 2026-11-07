@@ -1,5 +1,5 @@
 defmodule CookingSchedulerWeb.DishFormLive do
-  @moduledoc "Create or edit a dish idea (a saved dish) to reuse in future meals."
+  @moduledoc "Create a dish idea (a saved dish) to reuse in future meals. Existing dishes are edited in place on `DishLive`."
   use CookingSchedulerWeb, :live_view
 
   alias CookingScheduler.{Duration, Meals}
@@ -7,16 +7,12 @@ defmodule CookingSchedulerWeb.DishFormLive do
   alias CookingScheduler.Meals.SavedDish
 
   @impl true
-  def mount(params, _session, socket) do
-    dish =
-      case params do
-        %{"id" => id} -> Meals.get_saved_dish!(id)
-        _ -> %SavedDish{method: :oven, temp_unit: :gas_mark}
-      end
+  def mount(_params, _session, socket) do
+    dish = %SavedDish{method: :oven, temp_unit: :gas_mark}
 
     {:ok,
      socket
-     |> assign(:page_title, if(dish.id, do: "Edit dish", else: "New dish"))
+     |> assign(:page_title, "New dish")
      |> assign(:dish, dish)
      |> assign(:form, to_form(Meals.change_saved_dish(dish)))}
   end
@@ -28,14 +24,8 @@ defmodule CookingSchedulerWeb.DishFormLive do
   end
 
   def handle_event("save", %{"saved_dish" => params}, socket) do
-    result =
-      case socket.assigns.dish do
-        %SavedDish{id: nil} -> Meals.create_saved_dish(params)
-        dish -> Meals.update_saved_dish(dish, params)
-      end
-
-    case result do
-      {:ok, _} -> {:noreply, push_navigate(socket, to: ~p"/")}
+    case Meals.create_saved_dish(params) do
+      {:ok, dish} -> {:noreply, push_navigate(socket, to: ~p"/dishes/#{dish.id}")}
       {:error, changeset} -> {:noreply, assign(socket, :form, to_form(changeset))}
     end
   end
@@ -74,9 +64,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
       >
         <.icon name="hero-arrow-left-micro" class="size-4" /> Home
       </.link>
-      <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">
-        {if @dish.id, do: "Edit dish", else: "New dish"}
-      </h1>
+      <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">New dish</h1>
       <p class="mt-1 text-base-content/60">
         A dish idea you can drop into any future meal. Each meal gets its own copy.
       </p>

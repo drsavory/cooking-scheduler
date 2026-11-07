@@ -20,6 +20,7 @@ defmodule CookingScheduler.Meals.Dish do
     belongs_to :appliance, Appliance
     belongs_to :meal, CookingScheduler.Meals.Meal
     belongs_to :saved_dish, CookingScheduler.Meals.SavedDish
+    has_many :dish_ingredients, CookingScheduler.Meals.DishIngredient
     field :notes, :string
     field :link, :string
     field :ingredients_in, :boolean, default: false

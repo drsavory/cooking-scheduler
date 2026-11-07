@@ -28,6 +28,7 @@ defmodule CookingScheduler.Meals.SavedDish do
     field :link, :string
 
     has_many :dishes, CookingScheduler.Meals.Dish
+    has_many :dish_ingredients, CookingScheduler.Meals.DishIngredient
 
     timestamps(type: :utc_datetime)
   end

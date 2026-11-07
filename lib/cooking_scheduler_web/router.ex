@@ -20,7 +20,8 @@ defmodule CookingSchedulerWeb.Router do
     live "/", HomeLive
     live "/setup", SetupLive
     live "/dishes/new", DishFormLive, :new
-    live "/dishes/:id/edit", DishFormLive, :edit
+    live "/dishes/:id", DishLive, :saved
+    live "/meals/:meal_id/dishes/:id", DishLive, :meal
     live "/meals/:id/plan", PlanLive
     live "/meals/:id/cook", CookLive
   end
