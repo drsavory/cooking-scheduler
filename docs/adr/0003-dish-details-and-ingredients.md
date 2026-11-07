@@ -39,7 +39,7 @@ leads to its detail page afterwards.
   matched case-insensitively, and any number of dishes use it.
 - A dish has ingredients **with an optional amount**, stored as a number plus a
   unit chosen from a dropdown: `g`, `kg`, `ml`, `l`, `tsp`, `tbsp`, `cup`,
-  `pinch`. No unit means a count (2 onions). Amounts accept decimals and
+  `pinch`. No unit means whole items, shown as "2 items" and chosen as "items" in the dropdown. Amounts accept decimals and
   fractions ("1.5", "1/2", "1 1/2"). A unit without an amount is dropped.
   Adding an ingredient the dish already has updates the amount.
 - Removing an ingredient from a dish never deletes it from the shared list.
@@ -55,6 +55,14 @@ Ingredients follow the same independence rules as the rest of a dish
 - Changing ingredients on a meal dish updates its library dish, under the same
   rule as other details: not for placeholder names, and not once the meal has
   been started.
+- Changing ingredients on a **library dish** also replaces the ingredients of
+  that dish in every meal that is still `planning` or `prepping`, so ingredients
+  added from the Dishes list show up in meals already planned. Meals that are
+  `cooking` or `complete` are historical and are left alone. This applies to
+  ingredients only; other library dish details still don't reach existing meals.
+  Because it replaces the list, ingredients added on a meal's own copy are lost
+  when the library dish's ingredients change. Edits on a meal dish never spread
+  to other meals, only to the library.
 
 ## Consequences
 

@@ -66,10 +66,18 @@ defmodule CookingScheduler.Meals.DishIngredient do
 
   def parse_unit(_), do: nil
 
-  @doc ~s|"50 g", "1.5 l", "2" (a count) or nil when there is no amount.|
+  @doc ~s|Formats a total like `{1.5, :kg}` as "1.5 kg", or `{2.0, nil}` as "2".|
+  def format_amount({amount, nil}), do: count(amount)
+  def format_amount({amount, unit}), do: "#{format_number(amount)} #{unit}"
+
+  @doc ~s|"50 g", "1.5 l", "2 items" (a count) or nil when there is no amount.|
   def format(%__MODULE__{amount: nil}), do: nil
-  def format(%__MODULE__{amount: a, unit: nil}), do: format_number(a)
+  def format(%__MODULE__{amount: a, unit: nil}), do: count(a)
   def format(%__MODULE__{amount: a, unit: u}), do: "#{format_number(a)} #{u}"
+
+  # No unit means whole items: "3 items", "1 item".
+  defp count(1.0), do: "1 item"
+  defp count(a), do: "#{format_number(a)} items"
 
   defp format_number(a) when a == trunc(a), do: Integer.to_string(trunc(a))
   defp format_number(a), do: a |> Float.round(2) |> Float.to_string()

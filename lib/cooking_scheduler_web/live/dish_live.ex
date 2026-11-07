@@ -100,10 +100,17 @@ defmodule CookingSchedulerWeb.DishLive do
   def handle_event("add_ingredient", %{"ingredient" => %{"name" => name} = params}, socket) do
     case Meals.add_ingredient(socket.assigns.dish, name, params["amount"], params["unit"]) do
       {:ok, _} ->
-        {:noreply, socket |> assign(:error, nil) |> load_ingredients()}
+        {:noreply,
+         socket
+         |> assign(:error, nil)
+         |> load_ingredients()
+         |> push_event("focus", %{id: "ingredient_name"})}
 
       {:error, :name} ->
-        {:noreply, assign(socket, :error, "Give the ingredient a name")}
+        {:noreply,
+         socket
+         |> assign(:error, "Give the ingredient a name")
+         |> push_event("focus", %{id: "ingredient_name"})}
 
       {:error, :amount} ->
         {:noreply, assign(socket, :error, "Amount should be a number, like 50, 1.5 or 1/2")}
@@ -454,7 +461,7 @@ defmodule CookingSchedulerWeb.DishLive do
               field={@form[:unit]}
               type="select"
               aria-label="Unit"
-              options={[{"Unit", ""} | Enum.map(DishIngredient.units(), &{Atom.to_string(&1), &1})]}
+              options={[{"items", ""} | Enum.map(DishIngredient.units(), &{Atom.to_string(&1), &1})]}
             />
           </div>
           <button id="add-ingredient" class="btn btn-glow rounded-full">

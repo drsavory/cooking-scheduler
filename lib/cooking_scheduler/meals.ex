@@ -384,6 +384,36 @@ defmodule CookingScheduler.Meals do
   @doc "Every known ingredient, A to Z."
   def list_ingredients, do: Repo.all(from i in Ingredient, order_by: fragment("lower(?)", i.name))
 
+  @doc """
+  Everything a meal needs, one row per ingredient, A to Z:
+  `%{ingredient:, amounts:, dishes:}`. `amounts` totals each unit separately (g with g, never
+  g with kg) as `[{amount, unit}]`, and is empty when no dish gives an amount. `dishes` names
+  the dishes that use it.
+  """
+  def shopping_list(%Meal{id: id}) do
+    Repo.all(
+      from di in DishIngredient,
+        join: d in assoc(di, :dish),
+        join: i in assoc(di, :ingredient),
+        where: d.meal_id == ^id,
+        order_by: [fragment("lower(?)", i.name), d.name],
+        select: {i, di.amount, di.unit, d.name}
+    )
+    |> Enum.group_by(fn {i, _, _, _} -> i end)
+    |> Enum.map(fn {ingredient, rows} ->
+      amounts =
+        rows
+        |> Enum.filter(fn {_, amount, _, _} -> amount end)
+        |> Enum.group_by(fn {_, _, unit, _} -> unit end, fn {_, amount, _, _} -> amount end)
+        |> Enum.map(fn {unit, list} -> {Enum.sum(list), unit} end)
+        |> Enum.sort_by(fn {_, unit} -> to_string(unit) end)
+
+      dishes = rows |> Enum.map(fn {_, _, _, name} -> name end) |> Enum.uniq()
+      %{ingredient: ingredient, amounts: amounts, dishes: dishes}
+    end)
+    |> Enum.sort_by(&String.downcase(&1.ingredient.name))
+  end
+
   @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal or saved dish."
   def list_dish_ingredients(%Dish{id: id}), do: ingredients_for({:dish, id})
   def list_dish_ingredients(%SavedDish{id: id}), do: ingredients_for({:saved, id})
@@ -490,7 +520,7 @@ defmodule CookingScheduler.Meals do
 
   # Same rule as the other details: ingredient edits on a meal dish flow back to its library
   # dish (unless it's a placeholder or the meal has been started). Editing a library dish
-  # itself changes nothing else.
+  # itself pushes its ingredients on to its unstarted meals (see below).
   defp sync_ingredients_to_library(%Dish{} = dish) do
     dish = Repo.get!(Dish, dish.id)
 
@@ -504,5 +534,28 @@ defmodule CookingScheduler.Meals do
     :ok
   end
 
-  defp sync_ingredients_to_library(%SavedDish{}), do: :ok
+  # The other way round: a library dish's ingredients also replace those of its copies in
+  # meals that haven't been started (planning or prepping). Started meals are history.
+  defp sync_ingredients_to_library(%SavedDish{} = saved), do: push_ingredients_to_meals(saved)
+
+  @doc """
+  Copies a library dish's ingredients onto its dishes in meals still being planned or prepped,
+  replacing what they had. Meals being cooked or finished are left alone.
+  """
+  def push_ingredients_to_meals(%SavedDish{id: id}) do
+    targets =
+      Repo.all(
+        from d in Dish,
+          join: m in assoc(d, :meal),
+          where: d.saved_dish_id == ^id and m.status in [:planning, :prepping],
+          select: d.id
+      )
+
+    for dish_id <- targets do
+      Repo.delete_all(owner_query({:dish, dish_id}))
+      copy_ingredients({:saved, id}, {:dish, dish_id})
+    end
+
+    :ok
+  end
 end

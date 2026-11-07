@@ -135,6 +135,8 @@ defmodule CookingSchedulerWeb.DishLiveTest do
     |> form("#ingredient-form", ingredient: %{name: "Potatoes", amount: "2", unit: "kg"})
     |> render_submit()
 
+    assert_push_event(lv, "focus", %{id: "ingredient_name"})
+    assert has_element?(lv, "#ingredient_name")
     [di] = Meals.list_dish_ingredients(dish)
     assert has_element?(lv, "#ingredient-#{di.id}", "Potatoes")
     assert has_element?(lv, "#ingredient-#{di.id}", "2 kg")
@@ -197,7 +199,7 @@ defmodule CookingSchedulerWeb.DishLiveTest do
   test "a count has no unit, and a unit without an amount is dropped", %{dish: dish} do
     {:ok, onions} = Meals.add_ingredient(dish, "Onions", "2")
     assert %{amount: 2.0, unit: nil} = onions
-    assert DishIngredient.format(onions) == "2"
+    assert DishIngredient.format(onions) == "2 items"
 
     {:ok, salt} = Meals.add_ingredient(dish, "Salt", "", "tsp")
     assert %{amount: nil, unit: nil} = salt
@@ -262,6 +264,27 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       {:ok, fresh} = Meals.create_meal(%{name: "Fresh"})
       {:ok, added} = Meals.add_saved_dish(fresh, saved)
       assert length(Meals.list_dish_ingredients(added)) >= 1
+    end
+
+    test "ingredients added to a library dish reach unstarted meals only", %{
+      meal: meal,
+      dish: dish
+    } do
+      saved = Meals.get_saved_dish!(Meals.get_dish!(dish.id).saved_dish_id)
+      {:ok, cooking} = Meals.create_meal_from(meal)
+      [cooked] = Meals.list_dishes(cooking)
+      {:ok, _} = Meals.start_cooking(cooked, 600)
+
+      {:ok, _} = Meals.add_ingredient(saved, "Goose fat", "2", "tbsp")
+
+      assert [%{ingredient: %{name: "Goose fat"}, amount: 2.0}] =
+               Meals.list_dish_ingredients(Meals.get_dish!(dish.id))
+
+      assert Meals.list_dish_ingredients(Meals.get_dish!(cooked.id)) == []
+
+      [di] = Meals.list_dish_ingredients(saved)
+      {:ok, _} = Meals.remove_ingredient(saved, di)
+      assert Meals.list_dish_ingredients(Meals.get_dish!(dish.id)) == []
     end
   end
 end

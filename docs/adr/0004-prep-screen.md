@@ -14,7 +14,11 @@ That is the work done in the days before cooking, and it was buried.
 Add a **Prep** view for a meal at `/meals/:id/prep`, between Plan and Cook:
 plan, then prep, then cook.
 
-- Step 1, **Get the ingredients in**: one large tick per dish ("all ingredients
+- A **shopping list** at the top: every ingredient in the meal once, A to Z, with
+  the dishes that use it. Amounts are totalled per unit (500 g + 1 kg, never
+  converted); an ingredient with no amounts just lists the dishes. It is derived,
+  not stored, so it has no ticks.
+- Step 1, **Check the ingredients are in**: one large tick per dish ("all ingredients
   in"), each listing the dish's ingredients and amounts. "Everything's in" ticks
   them all.
 - Step 2, **Prep ahead**: one tick per dish that has prep time, showing the prep
@@ -37,5 +41,5 @@ plan, then prep, then cook.
 ## Consequences
 
 - Prep is one more view of the same meal; no new data.
-- Per-ingredient ticks and a combined shopping list (totalling amounts across
-  dishes) are not done. They need a place to store per-ingredient state.
+- Per-ingredient ticks on the shopping list are not done. They need a place to
+  store per-ingredient state for a meal.

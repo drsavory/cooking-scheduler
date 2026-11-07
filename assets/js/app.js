@@ -56,6 +56,12 @@ window.addEventListener("pointermove", e => {
   })
 }, {passive: true})
 
+// Server-requested focus, e.g. back to the ingredient name box after adding one.
+window.addEventListener("phx:focus", e => {
+  const el = document.getElementById(e.detail.id)
+  if(el) el.focus()
+})
+
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 

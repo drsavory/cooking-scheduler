@@ -20,6 +20,7 @@ defmodule CookingSchedulerWeb.PrepLive do
       Map.new(dishes, fn d -> {d.id, Meals.list_dish_ingredients(d)} end)
 
     socket
+    |> assign(:shopping, Meals.shopping_list(meal))
     |> assign(:page_title, "Prep · #{meal.name}")
     |> assign(:meal, meal)
     |> assign(:entries, Enum.sort_by(entries, & &1.dish.name))
@@ -150,10 +151,37 @@ defmodule CookingSchedulerWeb.PrepLive do
           <progress class="progress progress-success w-full" value={@done} max={@total}></progress>
         </div>
 
+        <section id="shopping-section" class="mt-8">
+          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
+            Shopping list
+          </h2>
+          <p :if={@shopping == []} id="no-shopping" class="text-sm text-base-content/60">
+            No ingredients yet. Add them from each dish's details.
+          </p>
+          <ul
+            :if={@shopping != []}
+            class="divide-y divide-base-300 rounded-2xl border border-base-300 bg-base-100/80"
+          >
+            <li
+              :for={row <- @shopping}
+              id={"shopping-#{row.ingredient.id}"}
+              class="flex items-baseline justify-between gap-3 px-4 py-2.5"
+            >
+              <span class="min-w-0">
+                <span class="font-medium">{row.ingredient.name}</span>
+                <span class="block text-xs text-base-content/50">{Enum.join(row.dishes, ", ")}</span>
+              </span>
+              <span class="shrink-0 text-right font-semibold tabular-nums">
+                {Enum.map_join(row.amounts, " + ", &DishIngredient.format_amount/1)}
+              </span>
+            </li>
+          </ul>
+        </section>
+
         <section id="ingredients-section" class="mt-8">
           <div class="mb-3 flex items-center justify-between gap-2">
             <h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
-              1. Get the ingredients in
+              1. Check the ingredients are in
             </h2>
             <button
               id="all-ingredients-in"

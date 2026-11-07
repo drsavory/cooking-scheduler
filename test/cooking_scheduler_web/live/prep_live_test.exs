@@ -75,4 +75,26 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     assert_redirect(lv, ~p"/meals/#{meal.id}/prep")
     assert Meals.get_meal!(meal.id).status == :prepping
   end
+
+  test "shopping list totals amounts across dishes per unit", %{
+    conn: conn,
+    meal: meal,
+    with_prep: p,
+    no_prep: g
+  } do
+    {:ok, _} = Meals.add_ingredient(g, "potatoes", 500, :g)
+    {:ok, _} = Meals.add_ingredient(g, "Stock", nil)
+    {:ok, _} = Meals.add_ingredient(p, "Onion", 2)
+    {:ok, _} = Meals.add_ingredient(g, "Onion", 1)
+
+    [onion, potatoes, stock] = Meals.shopping_list(meal)
+    assert onion.amounts == [{3.0, nil}]
+    assert onion.dishes == ["Gravy", "Potatoes"]
+    assert potatoes.amounts == [{500.0, :g}, {1.0, :kg}]
+    assert stock.amounts == []
+
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
+    assert has_element?(lv, "#shopping-#{onion.ingredient.id}", "3")
+    assert has_element?(lv, "#shopping-#{potatoes.ingredient.id}", "500 g + 1 kg")
+  end
 end
