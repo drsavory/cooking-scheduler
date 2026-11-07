@@ -294,6 +294,13 @@ defmodule CookingSchedulerWeb.DishLive do
                 options={for u <- Appliance.temp_units(), do: {Appliance.temp_unit_label(u), u}}
               />
               <.box
+                locked={not @editing}
+                f={@dish_form[:oven_share]}
+                label="Oven space"
+                type="select"
+                options={CookingScheduler.Meals.Dish.oven_share_options()}
+              />
+              <.box
                 :if={meal_dish?(@dish)}
                 locked={not @editing}
                 f={@dish_form[:appliance_id]}

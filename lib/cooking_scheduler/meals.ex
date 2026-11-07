@@ -90,7 +90,7 @@ defmodule CookingScheduler.Meals do
     end)
   end
 
-  @copied ~w(name method ring_size temp temp_unit prep_minutes cook_minutes buffer_minutes
+  @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes buffer_minutes
              rest_minutes appliance_id notes link saved_dish_id)a
 
   @doc """

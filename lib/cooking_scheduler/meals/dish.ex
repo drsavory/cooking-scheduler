@@ -7,6 +7,10 @@ defmodule CookingScheduler.Meals.Dish do
 
   @methods ~w(oven ring appliance)a
 
+  # How much of an oven's space a dish takes up, in twelfths so halves, thirds and quarters
+  # all add up exactly. The oven holds 12.
+  @oven_shares [full: 12, half: 6, third: 4, quarter: 3]
+
   schema "dishes" do
     field :name, :string
     field :method, Ecto.Enum, values: @methods, default: :oven
@@ -17,6 +21,7 @@ defmodule CookingScheduler.Meals.Dish do
     field :temp, :float
     field :temp_unit, Ecto.Enum, values: Appliance.temp_units()
     field :ring_size, Ecto.Enum, values: Appliance.ring_sizes()
+    field :oven_share, Ecto.Enum, values: Keyword.keys(@oven_shares), default: :third
     belongs_to :appliance, Appliance
     belongs_to :meal, CookingScheduler.Meals.Meal
     belongs_to :saved_dish, CookingScheduler.Meals.SavedDish
@@ -36,7 +41,17 @@ defmodule CookingScheduler.Meals.Dish do
 
   def methods, do: @methods
 
-  @fields ~w(name method prep_minutes cook_minutes buffer_minutes rest_minutes temp temp_unit ring_size
+  @doc "Oven shares as `{label, value}` pairs for a select."
+  def oven_share_options,
+    do: [{"Whole oven", :full}, {"Half", :half}, {"Third", :third}, {"Quarter", :quarter}]
+
+  @doc "Total space in an oven, in the same units as `oven_units/1`."
+  def oven_capacity, do: 12
+
+  @doc "How many twelfths of an oven a share takes up."
+  def oven_units(share), do: Keyword.fetch!(@oven_shares, share || :third)
+
+  @fields ~w(name method prep_minutes cook_minutes buffer_minutes rest_minutes temp temp_unit ring_size oven_share
              appliance_id notes link ingredients_in prepped)a
 
   def changeset(dish, attrs) do

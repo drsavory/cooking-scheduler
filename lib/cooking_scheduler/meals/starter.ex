@@ -9,6 +9,7 @@ defmodule CookingScheduler.Meals.Starter do
   def dishes do
     [
       oven("Turkey (6.1 kg)", 7, 250, 20, 120, 60,
+        oven_share: :full,
         link: "https://www.jamieoliver.com/inspiration/how-to-cook-a-turkey-crown/",
         notes:
           "7 then 4 immediately.\nPrep time = take out of the fridge to warm up.\nBacon on turkey for last 30 mins.\n70 °C internal temp.\nBACON LATTICE",
@@ -31,6 +32,7 @@ defmodule CookingScheduler.Meals.Starter do
         prepped: true
       ),
       oven("Chestnut and bacon cake", 7, 70, 10, 15, 20,
+        oven_share: :half,
         link: "https://www.bbcgoodfood.com/recipes/chestnut-bacon-cake",
         ingredients_in: true,
         prepped: true

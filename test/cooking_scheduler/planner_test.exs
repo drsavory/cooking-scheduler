@@ -51,11 +51,33 @@ defmodule CookingScheduler.PlannerTest do
     assert Enum.all?(entries, &(&1.issues == []))
   end
 
+  test "dishes only share an oven while their space adds up to one oven" do
+    ovens = [oven(1, "Left"), oven(2, "Right")]
+
+    fits =
+      Planner.plan([dish(1, oven_share: :half), dish(2, oven_share: :third)], @serve, ovens)
+
+    assert entry(fits, 1).resource.id == entry(fits, 2).resource.id
+
+    full =
+      Planner.plan([dish(1, oven_share: :full), dish(2, oven_share: :quarter)], @serve, ovens)
+
+    assert entry(full, 1).resource.id != entry(full, 2).resource.id
+    assert Enum.all?(full, &(&1.issues == []))
+
+    [_, no_room] =
+      Planner.plan([dish(1, oven_share: :full), dish(2, oven_share: :quarter)], @serve, [
+        oven(1, "Only")
+      ])
+
+    assert no_room.issues == ["No oven with room at this temperature around this time"]
+  end
+
   test "clashing temperatures with only one oven are flagged, not double-booked" do
     entries = Planner.plan([dish(1, temp: 4.0), dish(2, temp: 8.0)], @serve, [oven(1, "Only")])
     flagged = Enum.filter(entries, &(&1.issues != []))
 
-    assert [%{resource: nil, issues: ["No oven free at this temperature around this time"]}] =
+    assert [%{resource: nil, issues: ["No oven with room at this temperature around this time"]}] =
              flagged
   end
 

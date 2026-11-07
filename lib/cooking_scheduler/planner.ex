@@ -106,6 +106,10 @@ defmodule CookingScheduler.Planner do
         e =
           e
           |> put_resource(oven, :pinned)
+          |> maybe_issue(
+            clashes == [] and over_capacity?(usage, claim.(oven), e),
+            "Not enough room left in #{oven.name} at that time"
+          )
           |> maybe_issue(not reaches?(oven, temp_c), "#{oven.name} can't reach this temperature")
           |> maybe_issue(
             clashes != [],
@@ -119,7 +123,8 @@ defmodule CookingScheduler.Planner do
 
         scored =
           for oven <- candidates,
-              incompatible(usage, claim.(oven), e, temp_c) == [] do
+              incompatible(usage, claim.(oven), e, temp_c) == [],
+              not over_capacity?(usage, claim.(oven), e) do
             # Prefer sharing an oven with dishes already at a similar temperature.
             {oven, length(overlapping(usage, claim.(oven), e))}
           end
@@ -133,7 +138,7 @@ defmodule CookingScheduler.Planner do
             {add_issue(e, "None of your ovens go to this temperature"), usage}
 
           [] ->
-            {add_issue(e, "No oven free at this temperature around this time"), usage}
+            {add_issue(e, "No oven with room at this temperature around this time"), usage}
         end
     end
   end
@@ -194,7 +199,20 @@ defmodule CookingScheduler.Planner do
   end
 
   defp use(key, e, temp_c),
-    do: %{key: key, start: e.cook_at, stop: e.out_at, temp_c: temp_c, name: e.dish.name}
+    do: %{
+      key: key,
+      start: e.cook_at,
+      stop: e.out_at,
+      temp_c: temp_c,
+      name: e.dish.name,
+      units: Dish.oven_units(e.dish.oven_share)
+    }
+
+  # Would this dish, alongside everything already in the oven at the same time, not fit?
+  defp over_capacity?(usage, key, e) do
+    used = usage |> overlapping(key, e) |> Enum.map(& &1.units) |> Enum.sum()
+    used + Dish.oven_units(e.dish.oven_share) > Dish.oven_capacity()
+  end
 
   defp overlapping(usage, key, e) do
     Enum.filter(usage, &(&1.key == key and &1.start < e.out_at and e.cook_at < &1.stop))

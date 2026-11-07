@@ -96,6 +96,14 @@ defmodule CookingSchedulerWeb.DishFormLive do
         </div>
 
         <.input
+          :if={method(@form) == :oven}
+          field={@form[:oven_share]}
+          type="select"
+          label="Oven space"
+          options={CookingScheduler.Meals.Dish.oven_share_options()}
+        />
+
+        <.input
           :if={method(@form) == :ring}
           field={@form[:ring_size]}
           type="select"

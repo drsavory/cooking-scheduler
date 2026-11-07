@@ -331,6 +331,12 @@ defmodule CookingSchedulerWeb.PlanLive do
                 type="select"
                 options={[{"Gas mark", :gas_mark}, {"°C", :celsius}, {"°F", :fahrenheit}]}
               />
+              <.mini
+                f={@form[:oven_share]}
+                label="Space"
+                type="select"
+                options={CookingScheduler.Meals.Dish.oven_share_options()}
+              />
               <div class="col-span-2">
                 <.mini
                   f={@form[:appliance_id]}
