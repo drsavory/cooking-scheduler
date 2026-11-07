@@ -16,10 +16,8 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       :ok
     end
 
-    test "shows the kitchen summary and links back to setup", %{conn: conn} do
-      {:ok, lv, html} = live(conn, ~p"/")
-      assert html =~ "Gas mark"
-      assert html =~ "large"
+    test "links to kitchen settings", %{conn: conn} do
+      {:ok, lv, _} = live(conn, ~p"/")
 
       {:ok, _lv, setup} =
         lv |> element("#edit-kitchen") |> render_click() |> follow_redirect(conn, ~p"/setup")

@@ -37,6 +37,25 @@ topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
+// Glass surfaces: light follows the pointer (--mx/--my on the hovered .glass), and the
+// aurora background drifts slightly with it (--px/--py on <html>, -1..1).
+let rafId = null
+window.addEventListener("pointermove", e => {
+  if(rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    const root = document.documentElement
+    root.style.setProperty("--px", (e.clientX / window.innerWidth - 0.5) * 2)
+    root.style.setProperty("--py", (e.clientY / window.innerHeight - 0.5) * 2)
+    const glass = e.target.closest && e.target.closest(".glass")
+    if(glass){
+      const r = glass.getBoundingClientRect()
+      glass.style.setProperty("--mx", `${e.clientX - r.left}px`)
+      glass.style.setProperty("--my", `${e.clientY - r.top}px`)
+    }
+  })
+}, {passive: true})
+
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 

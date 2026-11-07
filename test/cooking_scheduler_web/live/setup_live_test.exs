@@ -17,10 +17,10 @@ defmodule CookingSchedulerWeb.SetupLiveTest do
 
     lv |> element("#quick-add button", "Microwave") |> render_click()
 
-    {:ok, _lv, home} =
+    {:ok, home, _html} =
       lv |> element("#finished") |> render_click() |> follow_redirect(conn, ~p"/")
 
-    assert home =~ "Microwave"
+    assert has_element?(home, "#new-meal-form")
   end
 
   test "adding an oven creates an editable default", %{conn: conn} do

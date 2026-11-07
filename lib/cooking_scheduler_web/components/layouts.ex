@@ -37,33 +37,37 @@ defmodule CookingSchedulerWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="relative min-h-screen overflow-hidden bg-gradient-to-b from-base-200 to-base-100">
-      <div class="dots pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_bottom,black,transparent_60%)]">
-      </div>
-      <div class="pointer-events-none absolute -left-32 -top-32 size-96 rounded-full bg-primary/15 blur-3xl">
-      </div>
-      <div class="pointer-events-none absolute -right-32 top-40 size-96 rounded-full bg-secondary/15 blur-3xl">
-      </div>
+    <div class="aurora" aria-hidden="true">
+      <div class="aurora-blob aurora-a"></div>
+      <div class="aurora-blob aurora-b"></div>
+      <div class="aurora-blob aurora-c"></div>
+    </div>
+    <div class="relative min-h-screen">
       <header class={[
-        "relative mx-auto flex items-center justify-between px-4 py-5 sm:px-6",
+        "sticky top-3 z-30 mx-auto px-3 sm:px-6",
         (@wide && "max-w-6xl") || "max-w-4xl"
       ]}>
-        <a href="/" class="flex items-center gap-2.5">
-          <span class="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30">
-            <.icon name="hero-fire-solid" class="size-5" />
-          </span>
-          <span class="text-base font-semibold tracking-tight">Cooking Scheduler</span>
-        </a>
-        <div class="flex items-center gap-2 sm:gap-4">
-          <nav class="hidden items-center gap-1 text-sm font-medium sm:flex">
-            <.link navigate={~p"/"} class="btn btn-ghost btn-sm rounded-full">Home</.link>
-            <.link navigate={~p"/setup"} class="btn btn-ghost btn-sm rounded-full">Kitchen</.link>
-          </nav>
-          <.theme_toggle />
+        <div class="glass flex items-center justify-between rounded-full py-2 pl-2.5 pr-3">
+          <a href="/" class="flex items-center gap-2.5">
+            <span class="grid size-9 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30">
+              <.icon name="hero-fire-solid" class="size-5" />
+            </span>
+            <span class="text-base font-semibold tracking-tight">Cooking Scheduler</span>
+          </a>
+          <div class="flex items-center gap-2 sm:gap-4">
+            <nav class="hidden items-center gap-1 text-sm font-medium sm:flex">
+              <.link navigate={~p"/"} class="btn btn-ghost btn-sm rounded-full">Home</.link>
+              <.link navigate={~p"/setup"} class="btn btn-ghost btn-sm rounded-full">Kitchen</.link>
+            </nav>
+            <.theme_toggle />
+          </div>
         </div>
       </header>
 
-      <main class={["relative mx-auto px-4 pb-24 pt-6 sm:px-6", (@wide && "max-w-6xl") || "max-w-4xl"]}>
+      <main class={[
+        "relative mx-auto px-4 pb-24 pt-10 sm:px-6",
+        (@wide && "max-w-6xl") || "max-w-4xl"
+      ]}>
         {render_slot(@inner_block)}
       </main>
     </div>

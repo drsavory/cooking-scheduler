@@ -25,7 +25,8 @@ Log in and land directly on the **home page**. There is no other entry point.
 
 ### Home page
 
-- Shows the kitchen details.
+- Focused on meals and dishes. The kitchen is rarely changed, so it only gets a small
+  "Kitchen settings" link (plus the nav link), not a banner or summary.
 - Primary actions: **Create dish** and **Create meal**.
 - Lists **historical meals** and **dishes** in a clear, readable way.
   - Each meal shows: number of dishes, prep time, and how delayed it was
@@ -67,7 +68,7 @@ Log in and land directly on the **home page**. There is no other entry point.
 
 ## Implementation status
 
-- Done: home hub (kitchen, create dish/meal, meal and dish lists with stats), create/edit
+- Done: home hub (create dish/meal, meal and dish lists with stats, small kitchen settings link), create/edit
   dish form, per-meal plan and cook routes (`/meals/:id/plan`, `/meals/:id/cook`), removal
   of the implicit "current meal", the Library page and the redirect controller.
 - Meal status and delay are derived from the meal's dishes (`Meals.summarize/2`); no

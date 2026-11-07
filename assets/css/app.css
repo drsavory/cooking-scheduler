@@ -122,3 +122,87 @@ body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiase
 @media (prefers-reduced-motion: reduce) {
   .pop-in, .float-slow { animation: none; }
 }
+
+/* ---- Glass / modern-OS look ---- */
+
+/* Slowly drifting aurora behind everything; JS nudges it with the pointer (--px/--py). */
+.aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.aurora-blob {
+  position: absolute; border-radius: 9999px; filter: blur(80px); opacity: 0.55;
+  translate: calc(var(--px, 0) * var(--depth, 20px)) calc(var(--py, 0) * var(--depth, 20px));
+  transition: translate 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.aurora-a { --depth: 40px; width: 38rem; height: 38rem; left: -10rem; top: -12rem;
+  background: var(--color-primary); animation: drift-a 22s ease-in-out infinite; }
+.aurora-b { --depth: -30px; width: 34rem; height: 34rem; right: -8rem; top: 8rem;
+  background: var(--color-secondary); animation: drift-b 28s ease-in-out infinite; }
+.aurora-c { --depth: 24px; width: 30rem; height: 30rem; left: 30%; bottom: -14rem;
+  background: var(--color-accent); opacity: 0.4; animation: drift-a 32s ease-in-out infinite reverse; }
+[data-theme=dark] .aurora-blob { opacity: 0.28; }
+@keyframes drift-a { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(8rem,5rem) scale(1.15); } }
+@keyframes drift-b { 0%,100% { transform: translate(0,0) scale(1.1); } 50% { transform: translate(-7rem,6rem) scale(0.95); } }
+
+.glass {
+  position: relative; isolation: isolate;
+  background: linear-gradient(145deg,
+    color-mix(in oklab, var(--color-base-100) 78%, transparent),
+    color-mix(in oklab, var(--color-base-100) 50%, transparent));
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.55),
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 18px 40px -18px rgb(0 0 0 / 0.22);
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.35s;
+}
+[data-theme=dark] .glass { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 18px 40px -18px rgb(0 0 0 / 0.7); }
+/* Light follows the pointer across the surface. */
+.glass::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  opacity: 0; transition: opacity 0.3s;
+  background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in oklab, var(--color-primary) 20%, transparent), transparent 65%);
+}
+.glass:hover::before { opacity: 1; }
+.glass-lift:hover { transform: translateY(-3px); box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.6), 0 2px 4px rgb(0 0 0 / 0.04), 0 28px 50px -18px rgb(0 0 0 / 0.3); }
+
+.gradient-text {
+  background: linear-gradient(100deg, var(--color-primary), var(--color-accent) 55%, var(--color-secondary));
+  background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: sheen 8s linear infinite;
+}
+@keyframes sheen { to { background-position: 200% center; } }
+
+/* Primary action: gradient, glow, and a light sweep on hover. */
+.btn-glow {
+  position: relative; overflow: hidden; border: 0; color: var(--color-primary-content);
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in oklab, var(--color-primary) 60%, var(--color-accent)));
+  box-shadow: 0 8px 22px -6px color-mix(in oklab, var(--color-primary) 70%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.35);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.btn-glow::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-120%);
+  background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.45) 50%, transparent 70%);
+  transition: transform 0.6s;
+}
+.btn-glow:hover { transform: translateY(-1px) scale(1.03); }
+.btn-glow:hover::after { transform: translateX(120%); }
+.btn-glow:active { transform: scale(0.97); }
+
+.btn-glass {
+  background: color-mix(in oklab, var(--color-base-100) 55%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  transition: transform 0.2s, background 0.2s;
+}
+.btn-glass:hover { background: color-mix(in oklab, var(--color-base-100) 85%, transparent); transform: translateY(-1px); }
+
+@keyframes ping-soft { 0% { box-shadow: 0 0 0 0 currentColor; } 70%,100% { box-shadow: 0 0 0 8px transparent; } }
+.dot-live { animation: ping-soft 1.8s ease-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blob, .gradient-text, .dot-live { animation: none; }
+  .glass, .glass-lift:hover, .btn-glow:hover { transition: none; transform: none; }
+}
