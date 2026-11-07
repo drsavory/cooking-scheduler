@@ -58,8 +58,6 @@ defmodule CookingSchedulerWeb.Layouts do
           <nav class="hidden items-center gap-1 text-sm font-medium sm:flex">
             <.link navigate={~p"/"} class="btn btn-ghost btn-sm rounded-full">Home</.link>
             <.link navigate={~p"/setup"} class="btn btn-ghost btn-sm rounded-full">Kitchen</.link>
-            <.link navigate={~p"/dishes"} class="btn btn-ghost btn-sm rounded-full">Dishes</.link>
-            <.link navigate={~p"/cook"} class="btn btn-primary btn-sm rounded-full">Cook</.link>
           </nav>
           <.theme_toggle />
         </div>

@@ -1,4 +1,4 @@
-defmodule CookingScheduler.Meal.Starter do
+defmodule CookingScheduler.Meals.Starter do
   @moduledoc """
   Last year's menu, taken from the "Christmas Food Cooking Times" spreadsheet (2025 tab).
   Each entry is `{attrs, appliance_hint}`; the hint (e.g. "Grill") is matched against the

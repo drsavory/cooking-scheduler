@@ -2,7 +2,7 @@ defmodule CookingScheduler.PlannerTest do
   use ExUnit.Case, async: true
 
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meal.Dish
+  alias CookingScheduler.Meals.Dish
   alias CookingScheduler.Planner
 
   @serve 13 * 60 + 30

@@ -15,7 +15,7 @@ defmodule CookingScheduler.Planner do
   """
 
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meal.Dish
+  alias CookingScheduler.Meals.Dish
 
   # Two oven dishes can share an oven if their temperatures are this close (°C).
   @temp_tolerance 15

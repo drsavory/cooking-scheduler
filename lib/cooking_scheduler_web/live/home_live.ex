@@ -1,7 +1,7 @@
 defmodule CookingSchedulerWeb.HomeLive do
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.Kitchen
+  alias CookingScheduler.{Duration, Kitchen, Meals}
   alias CookingScheduler.Kitchen.Appliance
 
   @impl true
@@ -17,9 +17,44 @@ defmodule CookingSchedulerWeb.HomeLive do
          |> assign(:page_title, "Home")
          |> assign(:ovens, Enum.filter(appliances, &(&1.kind == :oven)))
          |> assign(:others, Enum.filter(appliances, &(&1.kind == :other)))
-         |> assign(:ring_counts, Kitchen.ring_counts())}
+         |> assign(:ring_counts, Kitchen.ring_counts())
+         |> load_meals()}
     end
   end
+
+  defp load_meals(socket) do
+    socket
+    |> assign(:meals, Meals.list_meal_summaries())
+    |> assign(:saved, Meals.list_saved_dishes())
+    |> assign(:usage, Meals.usage_by_saved_dish())
+  end
+
+  @impl true
+  def handle_event("new_meal", %{"from" => from}, socket) do
+    {:ok, meal} =
+      case from do
+        "" -> Meals.create_meal()
+        id -> id |> Meals.get_meal!() |> Meals.create_meal_from()
+      end
+
+    {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/plan")}
+  end
+
+  def handle_event("delete_meal", %{"id" => id}, socket) do
+    {:ok, _} = id |> Meals.get_meal!() |> Meals.delete_meal()
+    {:noreply, load_meals(socket)}
+  end
+
+  def handle_event("delete_dish", %{"id" => id}, socket) do
+    {:ok, _} = id |> Meals.get_saved_dish!() |> Meals.delete_saved_dish()
+    {:noreply, load_meals(socket)}
+  end
+
+  defp date_label(date), do: Calendar.strftime(date, "%d %b %Y")
+
+  defp method_icon(:oven), do: "hero-fire"
+  defp method_icon(:ring), do: "hero-stop-circle"
+  defp method_icon(:appliance), do: "hero-bolt"
 
   defp ring_total(counts), do: counts |> Map.values() |> Enum.sum()
 
@@ -68,6 +103,22 @@ defmodule CookingSchedulerWeb.HomeLive do
     """
   end
 
+  attr :status, :atom, required: true
+  attr :delay, :integer, default: nil
+
+  defp status_badge(assigns) do
+    ~H"""
+    <span :if={@status == :planned} class="badge badge-ghost badge-sm">Planned</span>
+    <span :if={@status == :cooking} class="badge badge-warning badge-soft badge-sm">Cooking</span>
+    <span :if={@status == :cooked and @delay == 0} class="badge badge-success badge-soft badge-sm">
+      Cooked · on time
+    </span>
+    <span :if={@status == :cooked and @delay > 0} class="badge badge-warning badge-soft badge-sm">
+      Cooked · {Duration.format(@delay)} late
+    </span>
+    """
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -77,28 +128,21 @@ defmodule CookingSchedulerWeb.HomeLive do
         </div>
         <div class="float-slow pointer-events-none absolute -bottom-16 right-24 size-40 rounded-full bg-white/10 [animation-delay:-3s]">
         </div>
-        <div class="pointer-events-none absolute right-40 top-10 size-14 rounded-full border-8 border-white/15">
-        </div>
 
         <div class="relative flex flex-wrap items-start justify-between gap-4">
           <div>
-            <span class="badge border-0 bg-white/20 text-primary-content">
-              <.icon name="hero-check-circle" class="size-4" /> Setup complete
-            </span>
-            <h1 class="mt-4 text-4xl font-extrabold tracking-tight sm:text-5xl">
-              Your kitchen is ready
-            </h1>
+            <h1 class="text-4xl font-extrabold tracking-tight sm:text-5xl">Your kitchen</h1>
             <p class="mt-3 max-w-md text-primary-content/80">
-              Next up: add your dishes and we'll work out what goes where, and when.
+              Plan a meal and we'll work out what goes where, and when.
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
             <.link
-              id="plan-dishes"
-              navigate={~p"/dishes"}
+              id="create-dish"
+              navigate={~p"/dishes/new"}
               class="btn rounded-full border-0 bg-white text-primary shadow-lg hover:bg-white/90"
             >
-              <.icon name="hero-clock" class="size-4" /> Plan dishes
+              <.icon name="hero-plus" class="size-4" /> Create dish
             </.link>
             <.link
               id="edit-kitchen"
@@ -117,7 +161,135 @@ defmodule CookingSchedulerWeb.HomeLive do
         </div>
       </div>
 
-      <div id="summary" class="mt-8 grid gap-4 sm:grid-cols-3">
+      <section id="meals" class="mt-10">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Meals</h2>
+          <form id="new-meal-form" phx-submit="new_meal" class="flex flex-wrap items-center gap-2">
+            <select
+              id="new-meal-from"
+              name="from"
+              aria-label="Start from"
+              class="select select-sm rounded-full"
+            >
+              <option value="">Start from scratch</option>
+              <option :for={%{meal: m} <- @meals} value={m.id}>
+                Start from {m.name} ({date_label(m.date)})
+              </option>
+            </select>
+            <button id="create-meal" type="submit" class="btn btn-sm btn-primary rounded-full">
+              <.icon name="hero-plus" class="size-4" /> Create meal
+            </button>
+          </form>
+        </div>
+
+        <p
+          :if={@meals == []}
+          class="rounded-3xl border border-dashed border-base-300 p-8 text-center text-sm text-base-content/60"
+        >
+          No meals yet. Create one to start planning.
+        </p>
+
+        <ul :if={@meals != []} class="grid gap-3 sm:grid-cols-2">
+          <li
+            :for={s <- @meals}
+            id={"meal-#{s.meal.id}"}
+            class="pop-in rounded-3xl border border-base-300 bg-base-100/90 p-5 shadow-sm backdrop-blur transition hover:shadow-lg"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <h3 class="truncate text-lg font-semibold">{s.meal.name}</h3>
+                <p class="mt-0.5 text-sm text-base-content/60">
+                  {date_label(s.meal.date)} · dinner at {Calendar.strftime(s.meal.serve_at, "%H:%M")}
+                </p>
+              </div>
+              <button
+                class="btn btn-xs btn-circle btn-ghost hover:text-error"
+                phx-click="delete_meal"
+                phx-value-id={s.meal.id}
+                data-confirm={"Delete #{s.meal.name} and its #{s.dishes} dishes? This can't be undone."}
+                aria-label={"Delete #{s.meal.name}"}
+              >
+                <.icon name="hero-trash" class="size-4" />
+              </button>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/70">
+              <span>{s.dishes} {if s.dishes == 1, do: "dish", else: "dishes"}</span>
+              <span :if={s.prep_minutes > 0}>{Duration.format(s.prep_minutes)} prep</span>
+              <.status_badge status={s.status} delay={s.delay} />
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <.link
+                id={"plan-meal-#{s.meal.id}"}
+                navigate={~p"/meals/#{s.meal.id}/plan"}
+                class="btn btn-sm rounded-full"
+              >
+                <.icon name="hero-table-cells" class="size-4" /> Plan
+              </.link>
+              <.link
+                id={"cook-meal-#{s.meal.id}"}
+                navigate={~p"/meals/#{s.meal.id}/cook"}
+                class="btn btn-sm btn-primary rounded-full"
+              >
+                <.icon name="hero-play" class="size-4" /> Cook
+              </.link>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section id="dishes" class="mt-10">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">Dishes</h2>
+          <.link navigate={~p"/dishes/new"} class="btn btn-sm rounded-full">
+            <.icon name="hero-plus" class="size-4" /> Create dish
+          </.link>
+        </div>
+
+        <p
+          :if={@saved == []}
+          class="rounded-3xl border border-dashed border-base-300 p-8 text-center text-sm text-base-content/60"
+        >
+          No dishes yet. Create one, or add dishes while planning a meal.
+        </p>
+
+        <ul :if={@saved != []} class="grid gap-2">
+          <li
+            :for={d <- @saved}
+            id={"dish-#{d.id}"}
+            class="flex items-center gap-3 rounded-2xl border border-base-300 bg-base-100/90 px-4 py-3"
+          >
+            <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-200 text-base-content/70">
+              <.icon name={method_icon(d.method)} class="size-4" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-semibold">{d.name}</div>
+              <div class="text-sm text-base-content/60">
+                cook {Duration.format(d.cook_minutes + d.buffer_minutes)} · used in {length(
+                  Map.get(@usage, d.id, [])
+                )} {if length(Map.get(@usage, d.id, [])) == 1, do: "meal", else: "meals"}
+              </div>
+            </div>
+            <.link
+              navigate={~p"/dishes/#{d.id}/edit"}
+              class="btn btn-xs btn-circle btn-ghost"
+              aria-label={"Edit #{d.name}"}
+            >
+              <.icon name="hero-pencil-square" class="size-4" />
+            </.link>
+            <button
+              class="btn btn-xs btn-circle btn-ghost hover:text-error"
+              phx-click="delete_dish"
+              phx-value-id={d.id}
+              data-confirm={"Delete #{d.name}? Meals that already use it keep their copy."}
+              aria-label={"Delete #{d.name}"}
+            >
+              <.icon name="hero-trash" class="size-4" />
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <div id="summary" class="mt-10 grid gap-4 sm:grid-cols-3">
         <.card icon="hero-fire" title="Ovens" class="[animation-delay:80ms]">
           <p :if={@ovens == []} class="text-sm text-base-content/50">None</p>
           <ul class="space-y-5">

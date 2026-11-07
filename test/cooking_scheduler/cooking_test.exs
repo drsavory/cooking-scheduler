@@ -3,7 +3,7 @@ defmodule CookingScheduler.CookingTest do
 
   alias CookingScheduler.{Cooking, Planner}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meal.Dish
+  alias CookingScheduler.Meals.Dish
 
   @serve 13 * 60 + 30
   @oven %Appliance{

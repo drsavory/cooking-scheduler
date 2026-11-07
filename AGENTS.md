@@ -447,3 +447,6 @@ And **never** do this:
 <!-- phoenix:liveview-end -->
 
 <!-- usage-rules-end -->
+## Product decisions
+
+- Product flow and layout decisions live in `docs/adr/`. Read the relevant ADR before changing navigation, screens or flow, and add a new numbered ADR for any new direction.

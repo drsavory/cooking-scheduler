@@ -1,40 +1,62 @@
-defmodule CookingSchedulerWeb.DishesLive do
+defmodule CookingSchedulerWeb.PlanLive do
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Duration, Kitchen, Meal, Planner}
-  alias CookingScheduler.Meal.{Dish, Plan}
+  alias CookingScheduler.{Duration, Kitchen, Meals, Planner}
+  alias CookingScheduler.Meals.{Dish, Meal}
 
   @impl true
-  def mount(_params, _session, socket) do
-    {:ok, socket |> assign(:page_title, "Dishes") |> assign(:invalid, %{}) |> load()}
+  def mount(%{"id" => id}, _session, socket) do
+    {:ok, socket |> assign(:invalid, %{}) |> load(Meals.get_meal!(id))}
   end
 
-  defp load(socket) do
+  defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
+
+  defp load(socket, %Meal{} = meal) do
     kitchen = Kitchen.list_appliances()
-    plan = Meal.get_plan()
-    dishes = Meal.list_dishes()
+    dishes = Meals.list_dishes(meal)
 
     socket
+    |> assign(:page_title, meal.name)
     |> assign(:kitchen, kitchen)
-    |> assign(:plan, plan)
-    |> assign(:plan_form, to_form(Meal.update_plan_changeset(plan), id: "plan"))
-    |> assign(:entries, Planner.plan(dishes, Plan.serve_minutes(plan), kitchen))
+    |> assign(:meal, meal)
+    |> assign(:meal_form, to_form(Meals.change_meal(meal), id: "meal"))
+    |> assign(:entries, Planner.plan(dishes, Meal.serve_minutes(meal), kitchen))
+    |> assign(:saved, Meals.saved_dishes_not_in(meal))
+    |> assign(
+      :other_meals,
+      for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
+    )
   end
 
   @impl true
   def handle_event("add_dish", %{"method" => method}, socket) do
     method = Enum.find(Dish.methods(), &(Atom.to_string(&1) == method))
-    if method, do: {:ok, _} = Meal.add_dish(method, socket.assigns.kitchen)
+    if method, do: {:ok, _} = Meals.add_dish(socket.assigns.meal, method, socket.assigns.kitchen)
     {:noreply, load(socket)}
   end
 
   def handle_event("start_from_last_year", _params, socket) do
-    Meal.load_starter_dishes(socket.assigns.kitchen)
+    Meals.load_starter_dishes(socket.assigns.meal, socket.assigns.kitchen)
     {:noreply, load(socket)}
   end
 
-  def handle_event("serve_time", %{"plan" => params}, socket) do
-    case Meal.update_plan(socket.assigns.plan, params) do
+  def handle_event("copy_from", %{"id" => id}, socket) do
+    :ok = Meals.copy_dishes(Meals.get_meal!(id), socket.assigns.meal)
+    {:noreply, load(socket)}
+  end
+
+  def handle_event("add_saved", %{"id" => id}, socket) do
+    {:ok, _} = Meals.add_saved_dish(socket.assigns.meal, Meals.get_saved_dish!(id))
+    {:noreply, load(socket)}
+  end
+
+  def handle_event("copy_meal", _params, socket) do
+    {:ok, meal} = Meals.create_meal_from(socket.assigns.meal)
+    {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/plan")}
+  end
+
+  def handle_event("update_meal", %{"meal" => params}, socket) do
+    case Meals.update_meal(socket.assigns.meal, params) do
       {:ok, _} -> {:noreply, load(socket)}
       {:error, _} -> {:noreply, socket}
     end
@@ -42,11 +64,11 @@ defmodule CookingSchedulerWeb.DishesLive do
 
   # Cards are always-editable forms: every change is saved as soon as it's valid.
   def handle_event("update", %{"dish_id" => id, "dish" => params}, socket) do
-    dish = Meal.get_dish!(id)
-    changeset = Meal.change_dish(dish, params)
+    dish = Meals.get_dish!(id)
+    changeset = Meals.change_dish(dish, params)
 
     if changeset.valid? do
-      {:ok, _} = Meal.update_dish(dish, params)
+      {:ok, _} = Meals.update_dish(dish, params)
       {:noreply, socket |> update(:invalid, &Map.delete(&1, dish.id)) |> load()}
     else
       form = to_form(%{changeset | action: :validate}, id: form_id(dish))
@@ -55,14 +77,14 @@ defmodule CookingSchedulerWeb.DishesLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    {:ok, _} = id |> Meal.get_dish!() |> Meal.delete_dish()
+    {:ok, _} = id |> Meals.get_dish!() |> Meals.delete_dish()
     {:noreply, socket |> update(:invalid, &Map.delete(&1, String.to_integer(id))) |> load()}
   end
 
   defp form_id(%Dish{id: id}), do: "dish-#{id}"
 
   defp card_form(%Dish{} = d, invalid) do
-    Map.get(invalid, d.id) || to_form(Meal.change_dish(d), id: form_id(d))
+    Map.get(invalid, d.id) || to_form(Meals.change_dish(d), id: form_id(d))
   end
 
   defp oven_options(kitchen),
@@ -370,32 +392,66 @@ defmodule CookingSchedulerWeb.DishesLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} wide>
-      <div class="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 class="bg-gradient-to-r from-primary to-secondary bg-clip-text text-3xl font-extrabold tracking-tight text-transparent sm:text-4xl">
-            Plan your dishes
-          </h1>
-          <p class="mt-1 text-sm text-base-content/60">
-            Everything counts back from serving time. Changes save as you go.
-          </p>
+      <.link
+        navigate={~p"/"}
+        class="mb-3 inline-flex items-center gap-1 text-sm text-base-content/60 hover:text-primary"
+      >
+        <.icon name="hero-arrow-left-micro" class="size-4" /> All meals
+      </.link>
+
+      <.form
+        for={@meal_form}
+        id="meal-form"
+        phx-change="update_meal"
+        class="flex flex-wrap items-center justify-between gap-4"
+      >
+        <div class="min-w-0 flex-1 basis-80">
+          <input
+            type="text"
+            id={@meal_form[:name].id}
+            name={@meal_form[:name].name}
+            value={@meal_form[:name].value}
+            aria-label="Meal name"
+            phx-debounce="400"
+            class="input input-ghost -ml-3 h-auto w-full px-3 py-1 text-3xl font-extrabold tracking-tight sm:text-4xl"
+          />
+          <div class="mt-1 flex flex-wrap items-center gap-3 text-sm text-base-content/60">
+            <input
+              type="date"
+              id={@meal_form[:date].id}
+              name={@meal_form[:date].name}
+              value={@meal_form[:date].value}
+              aria-label="Date"
+              class="input input-ghost input-sm -ml-3"
+            />
+            <span>Everything counts back from serving time. Changes save as you go.</span>
+          </div>
         </div>
 
-        <.form
-          for={@plan_form}
-          id="plan-form"
-          phx-change="serve_time"
-          class="flex items-center gap-3 rounded-2xl bg-gradient-to-br from-primary to-secondary py-2 pl-4 pr-2 text-primary-content shadow-lg shadow-primary/20"
-        >
+        <div class="flex items-center gap-3 rounded-2xl bg-gradient-to-br from-primary to-secondary py-2 pl-4 pr-2 text-primary-content shadow-lg shadow-primary/20">
           <.icon name="hero-bell-alert" class="size-5" />
           <span class="text-sm font-medium">Dinner at</span>
           <input
             type="time"
-            id={@plan_form[:serve_at].id}
-            name={@plan_form[:serve_at].name}
-            value={Calendar.strftime(@plan.serve_at, "%H:%M")}
+            id={@meal_form[:serve_at].id}
+            name={@meal_form[:serve_at].name}
+            value={Calendar.strftime(@meal.serve_at, "%H:%M")}
             class="input input-sm w-28 border-0 bg-white/20 text-center text-lg font-bold text-primary-content"
           />
-        </.form>
+        </div>
+      </.form>
+
+      <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+        <button id="copy-meal" class="btn btn-sm btn-ghost rounded-full" phx-click="copy_meal">
+          <.icon name="hero-document-duplicate" class="size-4" /> Copy as a new meal
+        </button>
+        <.link
+          id="cook-meal"
+          navigate={~p"/meals/#{@meal.id}/cook"}
+          class="btn btn-sm btn-primary rounded-full"
+        >
+          <.icon name="hero-play" class="size-4" /> Cook this meal
+        </.link>
       </div>
 
       <div id="add-dish" class="mt-5 flex flex-wrap items-center gap-2">
@@ -413,22 +469,55 @@ defmodule CookingSchedulerWeb.DishesLive do
         >
           <.icon name="hero-plus" class="size-4" /> {label}
         </button>
+        <button
+          :if={@saved != []}
+          id="open-saved"
+          class="btn btn-sm btn-secondary btn-soft rounded-full"
+          phx-click={JS.toggle(to: "#saved-picker")}
+        >
+          <.icon name="hero-bookmark" class="size-4" /> From saved dishes ({length(@saved)})
+        </button>
+      </div>
+
+      <div
+        :if={@saved != []}
+        id="saved-picker"
+        style="display: none"
+        class="mt-3 flex flex-wrap gap-2 rounded-2xl border border-base-300 bg-base-100/80 p-3"
+      >
+        <button
+          :for={s <- @saved}
+          class="btn btn-xs rounded-full"
+          phx-click="add_saved"
+          phx-value-id={s.id}
+        >
+          <.icon name="hero-plus-micro" class="size-3.5" /> {s.name}
+        </button>
       </div>
 
       <div
         :if={@entries == []}
         class="pop-in mt-6 rounded-3xl border border-dashed border-base-300 bg-base-100/70 p-8 text-center"
       >
-        <p class="text-base-content/60">
-          No dishes yet. Add one above, or start from last year's menu.
-        </p>
-        <button
-          id="start-from-last-year"
-          class="btn btn-primary mt-4 rounded-full"
-          phx-click="start_from_last_year"
-        >
-          <.icon name="hero-sparkles" class="size-4" /> Start from last year's menu
-        </button>
+        <p class="text-base-content/60">No dishes in this meal yet. Add one above, or:</p>
+        <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <button
+            :for={m <- @other_meals}
+            class="btn btn-primary btn-soft rounded-full"
+            phx-click="copy_from"
+            phx-value-id={m.id}
+          >
+            <.icon name="hero-document-duplicate" class="size-4" /> Copy from {m.name}
+          </button>
+          <button
+            :if={@other_meals == []}
+            id="start-from-last-year"
+            class="btn btn-primary rounded-full"
+            phx-click="start_from_last_year"
+          >
+            <.icon name="hero-sparkles" class="size-4" /> Start from last year's menu
+          </button>
+        </div>
       </div>
 
       <ul :if={@entries != []} id="dishes" class="mt-5 grid gap-2.5">

@@ -1,30 +1,32 @@
 defmodule CookingSchedulerWeb.CookLive do
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Clock, Cooking, Duration, Kitchen, Meal, Planner}
+  alias CookingScheduler.{Clock, Cooking, Duration, Kitchen, Meals, Planner}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meal.Plan
+  alias CookingScheduler.Meals.Meal
 
   @tick_ms 15_000
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(%{"id" => id}, _session, socket) do
     if connected?(socket), do: Process.send_after(self(), :tick, @tick_ms)
-    {:ok, socket |> assign(:page_title, "Cooking") |> load()}
+    {:ok, socket |> load(Meals.get_meal!(id))}
   end
 
-  # Reads the plan and progress from the database and derives everything shown.
-  defp load(socket) do
-    plan = Meal.get_plan()
+  # Reads the meal and its progress from the database and derives everything shown.
+  defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
 
+  defp load(socket, %Meal{} = meal) do
     entries =
-      Planner.plan(Meal.list_dishes(), Plan.serve_minutes(plan), Kitchen.list_appliances())
+      Planner.plan(Meals.list_dishes(meal), Meal.serve_minutes(meal), Kitchen.list_appliances())
 
-    socket |> assign(plan: plan, entries: entries) |> derive(Clock.now_minutes())
+    socket
+    |> assign(page_title: "Cooking · #{meal.name}", meal: meal, entries: entries)
+    |> derive(Clock.now_minutes())
   end
 
   defp derive(socket, now) do
-    serve = Plan.serve_minutes(socket.assigns.plan)
+    serve = Meal.serve_minutes(socket.assigns.meal)
     lives = Cooking.lives(socket.assigns.entries, now)
     projected = Cooking.projected_serve(lives, serve)
     tasks = Cooking.tasks(lives, now)
@@ -50,41 +52,41 @@ defmodule CookingSchedulerWeb.CookLive do
 
   @impl true
   def handle_event("complete", %{"dish" => id, "kind" => kind}, socket) do
-    dish = Meal.get_dish!(id)
+    dish = Meals.get_dish!(id)
     now = Clock.now_minutes()
 
     {:ok, _} =
       case kind do
-        "prep" -> Meal.set_prepped(dish, true)
-        "start" -> Meal.start_cooking(dish, now)
-        "out" -> Meal.finish_cooking(dish, now)
+        "prep" -> Meals.set_prepped(dish, true)
+        "start" -> Meals.start_cooking(dish, now)
+        "out" -> Meals.finish_cooking(dish, now)
       end
 
     {:noreply, load(socket)}
   end
 
   def handle_event("undo", %{"dish" => id, "kind" => kind}, socket) do
-    dish = Meal.get_dish!(id)
+    dish = Meals.get_dish!(id)
 
     {:ok, _} =
       case kind do
-        "prep" -> Meal.set_prepped(dish, false)
-        "start" -> Meal.undo_start(dish)
-        "out" -> Meal.undo_finish(dish)
+        "prep" -> Meals.set_prepped(dish, false)
+        "start" -> Meals.undo_start(dish)
+        "out" -> Meals.undo_finish(dish)
       end
 
     {:noreply, load(socket)}
   end
 
   def handle_event("extend", %{"dish" => id, "minutes" => minutes}, socket) do
-    {:ok, _} = id |> Meal.get_dish!() |> Meal.add_extra(String.to_integer(minutes))
+    {:ok, _} = id |> Meals.get_dish!() |> Meals.add_extra(String.to_integer(minutes))
     {:noreply, load(socket)}
   end
 
   def handle_event("shift_dinner", %{"minutes" => minutes}, socket) do
     {:ok, _} =
-      Meal.set_serve_minutes(
-        socket.assigns.plan,
+      Meals.set_serve_minutes(
+        socket.assigns.meal,
         socket.assigns.serve + String.to_integer(minutes)
       )
 
@@ -92,12 +94,12 @@ defmodule CookingSchedulerWeb.CookLive do
   end
 
   def handle_event("push_dinner", _params, socket) do
-    {:ok, _} = Meal.set_serve_minutes(socket.assigns.plan, socket.assigns.projected)
+    {:ok, _} = Meals.set_serve_minutes(socket.assigns.meal, socket.assigns.projected)
     {:noreply, load(socket)}
   end
 
   def handle_event("reset", _params, socket) do
-    :ok = Meal.reset_cooking()
+    :ok = Meals.reset_cooking(socket.assigns.meal)
     {:noreply, load(socket)}
   end
 
@@ -338,7 +340,7 @@ defmodule CookingSchedulerWeb.CookLive do
         class="mt-8 rounded-3xl border border-dashed border-base-300 p-8 text-center text-base-content/60"
       >
         Nothing to cook yet.
-        <.link navigate={~p"/dishes"} class="link link-primary">Add your dishes</.link>
+        <.link navigate={~p"/meals/#{@meal.id}/plan"} class="link link-primary">Add your dishes</.link>
         first.
       </div>
 

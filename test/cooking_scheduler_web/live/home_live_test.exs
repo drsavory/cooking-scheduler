@@ -3,24 +3,88 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias CookingScheduler.Kitchen
+  alias CookingScheduler.{Kitchen, Meals}
 
   test "first visit goes to setup", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/setup"}}} = live(conn, ~p"/")
   end
 
-  test "shows the kitchen summary and links back to setup", %{conn: conn} do
-    {:ok, _} = Kitchen.add_oven(:gas_mark)
-    {:ok, _} = Kitchen.adjust_rings(:large, 1)
+  describe "with a kitchen" do
+    setup do
+      {:ok, _} = Kitchen.add_oven(:gas_mark)
+      {:ok, _} = Kitchen.adjust_rings(:large, 1)
+      :ok
+    end
 
-    {:ok, lv, html} = live(conn, ~p"/")
-    assert html =~ "Your kitchen is ready"
-    assert html =~ "Gas mark"
-    assert html =~ "large"
+    test "shows the kitchen summary and links back to setup", %{conn: conn} do
+      {:ok, lv, html} = live(conn, ~p"/")
+      assert html =~ "Gas mark"
+      assert html =~ "large"
 
-    {:ok, _lv, setup} =
-      lv |> element("#edit-kitchen") |> render_click() |> follow_redirect(conn, ~p"/setup")
+      {:ok, _lv, setup} =
+        lv |> element("#edit-kitchen") |> render_click() |> follow_redirect(conn, ~p"/setup")
 
-    assert setup =~ "Set up your kitchen"
+      assert setup =~ "Set up your kitchen"
+    end
+
+    test "create dish goes to the dish form", %{conn: conn} do
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      {:ok, _lv, html} =
+        lv |> element("#create-dish") |> render_click() |> follow_redirect(conn, ~p"/dishes/new")
+
+      assert html =~ "dish-form"
+    end
+
+    test "creating a meal from scratch opens its plan", %{conn: conn} do
+      {:ok, lv, _} = live(conn, ~p"/")
+      {:error, {:live_redirect, %{to: to}}} = lv |> form("#new-meal-form") |> render_submit()
+
+      [meal] = Meals.list_meals()
+      assert to == "/meals/#{meal.id}/plan"
+      assert Meals.list_dishes(meal) == []
+    end
+
+    test "a meal can be started from any previous one, not just the latest", %{conn: conn} do
+      {:ok, old} = Meals.create_meal(%{name: "Christmas 2024", date: ~D[2024-12-25]})
+      {:ok, _} = Meals.add_dish(old, :ring, [])
+      {:ok, _newer} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
+
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      {:error, {:live_redirect, %{to: to}}} =
+        lv |> form("#new-meal-form", %{from: old.id}) |> render_submit()
+
+      new = Meals.list_meals() |> Enum.find(&(to == "/meals/#{&1.id}/plan"))
+      assert new.id != old.id
+      assert new.name == "Christmas 2025"
+      assert length(Meals.list_dishes(new)) == 1
+    end
+
+    test "lists meals with their stats and plan/cook links for each", %{conn: conn} do
+      {:ok, a} = Meals.create_meal(%{name: "Christmas 2024", date: ~D[2024-12-25]})
+      {:ok, b} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
+      {:ok, _} = Meals.add_dish(a, :ring, [])
+      {:ok, _} = Meals.add_dish(a, :ring, [])
+
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      assert has_element?(lv, "#meal-#{a.id}", "2 dishes")
+      assert has_element?(lv, "#meal-#{b.id}", "0 dishes")
+
+      for m <- [a, b] do
+        assert has_element?(lv, ~s|#plan-meal-#{m.id}[href="/meals/#{m.id}/plan"]|)
+        assert has_element?(lv, ~s|#cook-meal-#{m.id}[href="/meals/#{m.id}/cook"]|)
+      end
+    end
+
+    test "lists dishes and can delete one", %{conn: conn} do
+      {:ok, d} = Meals.create_saved_dish(%{name: "Gravy", method: :appliance})
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      assert has_element?(lv, "#dish-#{d.id}", "Gravy")
+      lv |> element("#dish-#{d.id} button[aria-label^=Delete]") |> render_click()
+      refute has_element?(lv, "#dish-#{d.id}")
+    end
   end
 end

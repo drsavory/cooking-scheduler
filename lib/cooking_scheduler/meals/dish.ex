@@ -1,4 +1,4 @@
-defmodule CookingScheduler.Meal.Dish do
+defmodule CookingScheduler.Meals.Dish do
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -18,6 +18,8 @@ defmodule CookingScheduler.Meal.Dish do
     field :temp_unit, Ecto.Enum, values: Appliance.temp_units()
     field :ring_size, Ecto.Enum, values: Appliance.ring_sizes()
     belongs_to :appliance, Appliance
+    belongs_to :meal, CookingScheduler.Meals.Meal
+    belongs_to :saved_dish, CookingScheduler.Meals.SavedDish
     field :notes, :string
     field :link, :string
     field :ingredients_in, :boolean, default: false
