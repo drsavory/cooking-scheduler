@@ -6,7 +6,16 @@ defmodule CookingScheduler.Meals do
 
   import Ecto.Query
   alias CookingScheduler.Repo
-  alias CookingScheduler.Meals.{Dish, DishIngredient, Ingredient, Meal, SavedDish, Starter}
+
+  alias CookingScheduler.Meals.{
+    Dish,
+    DishIngredient,
+    Ingredient,
+    Meal,
+    SavedDish,
+    ShoppingCheck,
+    Starter
+  }
 
   @default_serve ~T[13:30:00]
 
@@ -386,11 +395,16 @@ defmodule CookingScheduler.Meals do
 
   @doc """
   Everything a meal needs, one row per ingredient, A to Z:
-  `%{ingredient:, amounts:, dishes:}`. `amounts` totals each unit separately (g with g, never
+  `%{ingredient:, amounts:, dishes:, bought?:}`. `amounts` totals each unit separately (g with g, never
   g with kg) as `[{amount, unit}]`, and is empty when no dish gives an amount. `dishes` names
   the dishes that use it.
   """
   def shopping_list(%Meal{id: id}) do
+    bought =
+      MapSet.new(
+        Repo.all(from c in ShoppingCheck, where: c.meal_id == ^id, select: c.ingredient_id)
+      )
+
     Repo.all(
       from di in DishIngredient,
         join: d in assoc(di, :dish),
@@ -409,9 +423,63 @@ defmodule CookingScheduler.Meals do
         |> Enum.sort_by(fn {_, unit} -> to_string(unit) end)
 
       dishes = rows |> Enum.map(fn {_, _, _, name} -> name end) |> Enum.uniq()
-      %{ingredient: ingredient, amounts: amounts, dishes: dishes}
+
+      %{
+        ingredient: ingredient,
+        amounts: amounts,
+        dishes: dishes,
+        bought?: MapSet.member?(bought, ingredient.id)
+      }
     end)
     |> Enum.sort_by(&String.downcase(&1.ingredient.name))
+  end
+
+  @doc """
+  Ticks an ingredient off a meal's shopping list, or puts it back. Dishes using it follow:
+  a dish is "all ingredients in" once every one of its ingredients is bought, and not otherwise.
+  """
+  def set_bought(%Meal{id: id} = meal, ingredient_id, true) do
+    Repo.insert!(%ShoppingCheck{meal_id: id, ingredient_id: ingredient_id},
+      on_conflict: :nothing
+    )
+
+    sync_ingredients_in(meal, ingredient_id)
+  end
+
+  def set_bought(%Meal{id: id} = meal, ingredient_id, false) do
+    Repo.delete_all(
+      from c in ShoppingCheck, where: c.meal_id == ^id and c.ingredient_id == ^ingredient_id
+    )
+
+    sync_ingredients_in(meal, ingredient_id)
+  end
+
+  @doc "Unticks everything on a meal's shopping list (and the dishes that had it all in)."
+  def clear_bought(%Meal{id: id} = meal) do
+    Repo.delete_all(from c in ShoppingCheck, where: c.meal_id == ^id)
+    sync_ingredients_in(meal, nil)
+  end
+
+  # Re-derives "all ingredients in" for the meal's dishes that use `ingredient_id` (or any
+  # ingredient, for nil). Dishes with no ingredients are left to be ticked by hand.
+  defp sync_ingredients_in(%Meal{id: id}, ingredient_id) do
+    rows =
+      Repo.all(
+        from di in DishIngredient,
+          join: d in assoc(di, :dish),
+          left_join: c in ShoppingCheck,
+          on: c.meal_id == d.meal_id and c.ingredient_id == di.ingredient_id,
+          where: d.meal_id == ^id,
+          select: {d.id, di.ingredient_id, not is_nil(c.id)}
+      )
+
+    for {dish_id, dish_rows} <- Enum.group_by(rows, &elem(&1, 0)),
+        is_nil(ingredient_id) or Enum.any?(dish_rows, &(elem(&1, 1) == ingredient_id)) do
+      all_in = Enum.all?(dish_rows, &elem(&1, 2))
+      Repo.update_all(from(d in Dish, where: d.id == ^dish_id), set: [ingredients_in: all_in])
+    end
+
+    :ok
   end
 
   @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal or saved dish."

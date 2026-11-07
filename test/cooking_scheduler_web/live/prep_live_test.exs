@@ -94,7 +94,93 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     assert stock.amounts == []
 
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
-    assert has_element?(lv, "#shopping-#{onion.ingredient.id}", "3")
+    assert has_element?(lv, "#shopping-summary", "0 of 3 bought")
+
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
+    assert has_element?(lv, "#shopping-#{onion.ingredient.id}", "3 items")
     assert has_element?(lv, "#shopping-#{potatoes.ingredient.id}", "500 g + 1 kg")
+  end
+
+  test "shopping items can be ticked off and unticked", %{conn: conn, meal: meal, with_prep: p} do
+    {:ok, _} = Meals.add_ingredient(p, "Onion", 2)
+    [onion, potatoes] = Meals.shopping_list(meal)
+
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
+    assert has_element?(lv, "#to-buy #shopping-#{onion.ingredient.id}")
+
+    lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
+    assert has_element?(lv, "#bought #shopping-#{onion.ingredient.id}")
+    assert has_element?(lv, "#shopping-progress", "1 of 2 bought")
+    assert [%{bought?: true}, %{bought?: false}] = Meals.shopping_list(meal)
+
+    # ticks belong to the meal
+    {:ok, other} = Meals.create_meal(%{name: "Other"})
+    {:ok, od} = Meals.create_dish(other, %{name: "Mash", method: :ring, ring_size: :small})
+    {:ok, _} = Meals.add_ingredient(od, "Onion", 1)
+    assert [%{bought?: false}] = Meals.shopping_list(other)
+
+    lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
+    refute has_element?(lv, "#bought")
+
+    lv |> element("#tick-shopping-#{potatoes.ingredient.id}") |> render_click()
+    lv |> element("#clear-bought") |> render_click()
+    assert Enum.all?(Meals.shopping_list(meal), &(not &1.bought?))
+  end
+
+  test "buying every ingredient of a dish ticks it in, and unticking reverses it", %{
+    conn: conn,
+    meal: meal,
+    with_prep: p,
+    no_prep: g
+  } do
+    {:ok, _} = Meals.add_ingredient(p, "Onion", 2)
+    {:ok, _} = Meals.add_ingredient(g, "Stock", 1)
+    [onion, potatoes, stock] = Meals.shopping_list(meal)
+
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
+    lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
+    refute Meals.get_dish!(p.id).ingredients_in
+
+    lv |> element("#tick-shopping-#{potatoes.ingredient.id}") |> render_click()
+    assert Meals.get_dish!(p.id).ingredients_in
+    refute Meals.get_dish!(g.id).ingredients_in
+
+    lv |> element("#tick-shopping-#{stock.ingredient.id}") |> render_click()
+    assert Meals.get_dish!(g.id).ingredients_in
+
+    lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
+    refute Meals.get_dish!(p.id).ingredients_in
+    assert Meals.get_dish!(g.id).ingredients_in
+
+    lv |> element("#clear-bought") |> render_click()
+    refute Meals.get_dish!(g.id).ingredients_in
+  end
+
+  test "dishes with no ingredients are left alone", %{meal: meal, with_prep: p, no_prep: g} do
+    {:ok, _} = Meals.add_ingredient(p, "Onion", 2)
+    {:ok, _} = Meals.set_ingredients_in(g, true)
+    [onion, _potatoes] = Meals.shopping_list(meal)
+
+    :ok = Meals.set_bought(meal, onion.ingredient.id, true)
+    :ok = Meals.clear_bought(meal)
+    assert Meals.get_dish!(g.id).ingredients_in
+  end
+
+  test "each dish shows which ingredients are in and which are missing", %{
+    conn: conn,
+    meal: meal,
+    with_prep: p
+  } do
+    {:ok, _} = Meals.add_ingredient(p, "Onion", 2)
+    [onion, potatoes] = Meals.shopping_list(meal)
+    :ok = Meals.set_bought(meal, onion.ingredient.id, true)
+
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
+    assert has_element?(lv, ~s|#dish-#{p.id}-ingredient-#{onion.ingredient.id}[data-state="in"]|)
+
+    assert has_element?(
+             lv,
+             ~s|#dish-#{p.id}-ingredient-#{potatoes.ingredient.id}[data-state="missing"]|
+           )
   end
 end

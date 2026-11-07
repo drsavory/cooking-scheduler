@@ -14,10 +14,8 @@ That is the work done in the days before cooking, and it was buried.
 Add a **Prep** view for a meal at `/meals/:id/prep`, between Plan and Cook:
 plan, then prep, then cook.
 
-- A **shopping list** at the top: every ingredient in the meal once, A to Z, with
-  the dishes that use it. Amounts are totalled per unit (500 g + 1 kg, never
-  converted); an ingredient with no amounts just lists the dishes. It is derived,
-  not stored, so it has no ticks.
+- A **shopping list** link at the top, showing "N of M bought". The list has its own
+  screen (`/meals/:id/shopping`, see below).
 - Step 1, **Check the ingredients are in**: one large tick per dish ("all ingredients
   in"), each listing the dish's ingredients and amounts. "Everything's in" ticks
   them all.
@@ -41,5 +39,22 @@ plan, then prep, then cook.
 ## Consequences
 
 - Prep is one more view of the same meal; no new data.
-- Per-ingredient ticks on the shopping list are not done. They need a place to
-  store per-ingredient state for a meal.
+- Shopping ticks are stored (see below), so they survive reloads and are per meal.
+
+## Shopping list
+
+`/meals/:id/shopping`, reached from Prep. Every ingredient in the meal appears
+once, A to Z, with the dishes that use it. Amounts are totalled per unit
+(500 g + 1 kg, 3 items; never converted); an ingredient with no amounts just
+lists its dishes. Tapping an item ticks it off and moves it to a "Bought"
+group; "Untick all" resets.
+
+- The list is derived from the meal's dishes, so it always matches them.
+- Only the ticks are stored, in `shopping_checks` (meal + ingredient; a row means
+  bought). Ticks belong to one meal, so the same ingredient in another meal is
+  separate. If an ingredient is removed from every dish its tick simply stops
+  showing.
+- Dishes follow the list: a dish's "all ingredients in" (Prep step 1) is ticked
+  automatically once every one of its ingredients is bought, and unticked when one
+  is put back or "Untick all" is used. A dish with no ingredients is never touched, so
+  it can still be ticked by hand. Ticking a dish by hand does not tick its ingredients.

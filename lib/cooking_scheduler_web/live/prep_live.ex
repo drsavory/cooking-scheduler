@@ -19,8 +19,14 @@ defmodule CookingSchedulerWeb.PrepLive do
     ingredients =
       Map.new(dishes, fn d -> {d.id, Meals.list_dish_ingredients(d)} end)
 
+    shopping = Meals.shopping_list(meal)
+
     socket
-    |> assign(:shopping, Meals.shopping_list(meal))
+    |> assign(:shopping, shopping)
+    |> assign(
+      :bought,
+      for(row <- shopping, row.bought?, into: MapSet.new(), do: row.ingredient.id)
+    )
     |> assign(:page_title, "Prep · #{meal.name}")
     |> assign(:meal, meal)
     |> assign(:entries, Enum.sort_by(entries, & &1.dish.name))
@@ -151,32 +157,25 @@ defmodule CookingSchedulerWeb.PrepLive do
           <progress class="progress progress-success w-full" value={@done} max={@total}></progress>
         </div>
 
-        <section id="shopping-section" class="mt-8">
-          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
-            Shopping list
-          </h2>
-          <p :if={@shopping == []} id="no-shopping" class="text-sm text-base-content/60">
-            No ingredients yet. Add them from each dish's details.
-          </p>
-          <ul
-            :if={@shopping != []}
-            class="divide-y divide-base-300 rounded-2xl border border-base-300 bg-base-100/80"
-          >
-            <li
-              :for={row <- @shopping}
-              id={"shopping-#{row.ingredient.id}"}
-              class="flex items-baseline justify-between gap-3 px-4 py-2.5"
-            >
-              <span class="min-w-0">
-                <span class="font-medium">{row.ingredient.name}</span>
-                <span class="block text-xs text-base-content/50">{Enum.join(row.dishes, ", ")}</span>
-              </span>
-              <span class="shrink-0 text-right font-semibold tabular-nums">
-                {Enum.map_join(row.amounts, " + ", &DishIngredient.format_amount/1)}
-              </span>
-            </li>
-          </ul>
-        </section>
+        <.link
+          id="shopping-link"
+          navigate={~p"/meals/#{@meal.id}/shopping"}
+          class="mt-8 flex items-center justify-between gap-3 rounded-2xl border border-base-300 bg-base-100/80 p-4 transition hover:border-primary/50 hover:shadow-md"
+        >
+          <span>
+            <span class="flex items-center gap-2 font-semibold">
+              <.icon name="hero-shopping-cart" class="size-5" /> Shopping list
+            </span>
+            <span id="shopping-summary" class="block text-sm text-base-content/60">
+              <%= if @shopping == [] do %>
+                No ingredients yet
+              <% else %>
+                {Enum.count(@shopping, & &1.bought?)} of {length(@shopping)} bought
+              <% end %>
+            </span>
+          </span>
+          <.icon name="hero-chevron-right" class="size-5 text-base-content/40" />
+        </.link>
 
         <section id="ingredients-section" class="mt-8">
           <div class="mb-3 flex items-center justify-between gap-2">
@@ -209,9 +208,32 @@ defmodule CookingSchedulerWeb.PrepLive do
                 </span>
                 <span
                   :if={Map.fetch!(@ingredients, e.dish.id) != []}
-                  class="block text-sm text-base-content/60"
+                  id={"ingredient-status-#{e.dish.id}"}
+                  class="mt-1.5 flex flex-wrap gap-1.5"
                 >
-                  {Enum.map_join(Map.fetch!(@ingredients, e.dish.id), ", ", &ingredient_label/1)}
+                  <span
+                    :for={di <- Map.fetch!(@ingredients, e.dish.id)}
+                    id={"dish-#{e.dish.id}-ingredient-#{di.ingredient.id}"}
+                    data-state={
+                      if MapSet.member?(@bought, di.ingredient.id), do: "in", else: "missing"
+                    }
+                    class={[
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                      MapSet.member?(@bought, di.ingredient.id) && "bg-success/15 text-success",
+                      !MapSet.member?(@bought, di.ingredient.id) &&
+                        "bg-warning/20 text-warning-content"
+                    ]}
+                  >
+                    <.icon
+                      name={
+                        if MapSet.member?(@bought, di.ingredient.id),
+                          do: "hero-check-micro",
+                          else: "hero-shopping-cart-micro"
+                      }
+                      class="size-3"
+                    />
+                    {ingredient_label(di)}
+                  </span>
                 </span>
               </.tick>
             </li>
