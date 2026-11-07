@@ -10,7 +10,7 @@ defmodule CookingScheduler.Planner do
 
       serve  = finish
       out    = serve - rest           (comes out of the oven / off the heat)
-      cook   = out - (cook + buffer)  (goes in)
+      cook   = out - cook             (goes in)
       prep   = cook - prep            (start preparing)
   """
 
@@ -111,8 +111,8 @@ defmodule CookingScheduler.Planner do
 
   defp uses_equipment?(%Entry{dish: d}), do: total_minutes(d) > 0
 
-  @doc "Time on the heat: cooking + buffer + any extra added on the day."
-  def total_minutes(%MealDish{} = d), do: d.cook_minutes + d.buffer_minutes + d.extra_minutes
+  @doc "Time on the heat: cooking plus any extra added on the day."
+  def total_minutes(%MealDish{} = d), do: d.cook_minutes + d.extra_minutes
 
   # ---- assignment -----------------------------------------------------------
 

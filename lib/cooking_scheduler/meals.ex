@@ -43,7 +43,7 @@ defmodule CookingScheduler.Meals do
   end
 
   def summarize(%Meal{} = meal, dishes) do
-    timed = Enum.filter(dishes, &(&1.cook_minutes + &1.buffer_minutes > 0))
+    timed = Enum.filter(dishes, &(&1.cook_minutes > 0))
     # Dishes skipped when a meal is finished early don't count towards the delay.
     delay =
       if meal.status == :complete do
@@ -95,7 +95,7 @@ defmodule CookingScheduler.Meals do
     end)
   end
 
-  @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes buffer_minutes
+  @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
              rest_minutes appliance_id notes link dish_id)a
 
   @doc """
@@ -230,7 +230,7 @@ defmodule CookingScheduler.Meals do
   defp sync_status(meal_id) do
     meal = Repo.get!(Meal, meal_id)
     dishes = Repo.all(from d in MealDish, where: d.meal_id == ^meal_id)
-    timed = Enum.filter(dishes, &(&1.cook_minutes + &1.buffer_minutes > 0))
+    timed = Enum.filter(dishes, &(&1.cook_minutes > 0))
     started? = Enum.any?(timed, &(&1.cook_started_at || &1.cook_done_at))
 
     new =

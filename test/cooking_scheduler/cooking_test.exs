@@ -25,7 +25,6 @@ defmodule CookingScheduler.CookingTest do
         temp_unit: :gas_mark,
         prep_minutes: 30,
         cook_minutes: 120,
-        buffer_minutes: 0,
         rest_minutes: 60,
         extra_minutes: 0
       },

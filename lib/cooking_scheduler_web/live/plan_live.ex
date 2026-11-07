@@ -389,7 +389,7 @@ defmodule CookingSchedulerWeb.PlanLive do
   defp timeline(assigns) do
     ~H"""
     <div
-      :if={@entry.dish.cook_minutes + @entry.dish.buffer_minutes > 0}
+      :if={@entry.dish.cook_minutes > 0}
       class="flex flex-wrap items-center gap-1"
     >
       <.step :if={@entry.dish.prep_minutes > 0} label="Prep" time={@entry.prep_at} />
@@ -544,7 +544,6 @@ defmodule CookingSchedulerWeb.PlanLive do
             <% end %>
             <.duration_input form={@form} field={:prep_minutes} label="Prep" />
             <.duration_input form={@form} field={:cook_minutes} label="Cook" />
-            <.duration_input form={@form} field={:buffer_minutes} label="+ Buffer" />
             <.duration_input form={@form} field={:rest_minutes} label="Rest" />
           </div>
         </div>

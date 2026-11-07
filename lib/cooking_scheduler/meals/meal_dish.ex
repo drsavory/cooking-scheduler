@@ -16,7 +16,6 @@ defmodule CookingScheduler.Meals.MealDish do
     field :method, Ecto.Enum, values: @methods, default: :oven
     field :prep_minutes, Duration, default: 0
     field :cook_minutes, Duration, default: 0
-    field :buffer_minutes, Duration, default: 0
     field :rest_minutes, Duration, default: 0
     field :temp, :float
     field :temp_unit, Ecto.Enum, values: Appliance.temp_units()
@@ -51,7 +50,7 @@ defmodule CookingScheduler.Meals.MealDish do
   @doc "How many twelfths of an oven a share takes up."
   def oven_units(share), do: Keyword.fetch!(@oven_shares, share || :third)
 
-  @fields ~w(name method prep_minutes cook_minutes buffer_minutes rest_minutes temp temp_unit ring_size oven_share
+  @fields ~w(name method prep_minutes cook_minutes rest_minutes temp temp_unit ring_size oven_share
              appliance_id notes link ingredients_in prepped)a
 
   def changeset(dish, attrs) do
@@ -59,7 +58,7 @@ defmodule CookingScheduler.Meals.MealDish do
     |> cast(attrs, @fields)
     |> validate_required([:name, :method])
     |> validate_length(:name, max: 80)
-    |> default_zero([:prep_minutes, :cook_minutes, :buffer_minutes, :rest_minutes])
+    |> default_zero([:prep_minutes, :cook_minutes, :rest_minutes])
     |> validate_by_method()
   end
 

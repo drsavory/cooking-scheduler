@@ -398,7 +398,7 @@ defmodule CookingSchedulerWeb.HomeLive do
                 {d.name}
               </.link>
               <div class="text-xs text-base-content/60">
-                {Duration.format(d.cook_minutes + d.buffer_minutes)} cook · {plural(
+                {Duration.format(d.cook_minutes)} cook · {plural(
                   length(Map.get(@usage, d.id, [])),
                   "meal",
                   "meals"

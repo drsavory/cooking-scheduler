@@ -12,7 +12,6 @@ defmodule CookingScheduler.MealsTest do
         temp_unit: :gas_mark,
         prep_minutes: 5,
         cook_minutes: 90,
-        buffer_minutes: 10,
         rest_minutes: 15,
         notes: "parboil first",
         link: "https://example.com/roasties"
@@ -157,7 +156,6 @@ defmodule CookingScheduler.MealsTest do
       assert %{
                name: "Roast potatoes",
                cook_minutes: 90,
-               buffer_minutes: 10,
                rest_minutes: 15,
                notes: "parboil first",
                link: "https://example.com/roasties",

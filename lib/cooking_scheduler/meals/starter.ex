@@ -3,12 +3,12 @@ defmodule CookingScheduler.Meals.Starter do
   Last year's menu, taken from the "Christmas Food Cooking Times" spreadsheet (2025 tab).
   Each entry is `{attrs, appliance_hint}`; the hint (e.g. "Grill") is matched against the
   user's own appliances when loading. Cooking times are the spreadsheet's *suggested* time
-  plus its adjustment as `buffer_minutes`. Rest times are what the sheet used.
+  plus its adjustment. Rest times are what the sheet used.
   """
 
   def dishes do
     [
-      oven("Turkey (6.1 kg)", 7, 250, 20, 120, 60,
+      oven("Turkey (6.1 kg)", 7, 270, 120, 60,
         oven_share: :full,
         link: "https://www.jamieoliver.com/inspiration/how-to-cook-a-turkey-crown/",
         notes:
@@ -16,40 +16,39 @@ defmodule CookingScheduler.Meals.Starter do
         ingredients_in: true,
         prepped: true
       ),
-      oven("Roast potatoes", 4, 90, 10, 15, 0,
+      oven("Roast potatoes", 4, 100, 15, 0,
         link: "https://www.jamieoliver.com/recipes/potato-recipes/best-roast-potatoes/",
         ingredients_in: true,
         prepped: true
       ),
-      oven("Pigs in blankets", 5, 30, 10, 15, 0,
+      oven("Pigs in blankets", 5, 40, 15, 0,
         notes: "Will do 4 for longer.",
         ingredients_in: true,
         prepped: true
       ),
-      oven("Fig and almond stuffing", 4, 30, 10, 15, 5,
+      oven("Fig and almond stuffing", 4, 40, 15, 5,
         link: "https://www.aldi.co.uk/fig-and-almond-stuffing-/p/000000561281500",
         ingredients_in: true,
         prepped: true
       ),
-      oven("Chestnut and bacon cake", 7, 70, 10, 15, 20,
+      oven("Chestnut and bacon cake", 7, 80, 15, 20,
         oven_share: :half,
         link: "https://www.bbcgoodfood.com/recipes/chestnut-bacon-cake",
         ingredients_in: true,
         prepped: true
       ),
-      oven("Roast veg", 7, 60, 10, 15, 20,
+      oven("Roast veg", 7, 70, 15, 20,
         link: "https://www.bbcgoodfood.com/recipes/roasted-carrots",
         ingredients_in: true,
         prepped: true
       ),
-      oven("Salmon", 6, 50, 1, 15, 0, notes: "Will do 7 for shorter."),
-      oven("Yorkshire puddings", 8, 15, 10, 0, 0, ingredients_in: true, prepped: true),
+      oven("Salmon", 6, 51, 15, 0, notes: "Will do 7 for shorter."),
+      oven("Yorkshire puddings", 8, 25, 0, 0, ingredients_in: true, prepped: true),
       {%{
          name: "Umami sprouts (after hob)",
          method: :appliance,
          prep_minutes: 20,
-         cook_minutes: 60,
-         buffer_minutes: 10,
+         cook_minutes: 70,
          rest_minutes: 15,
          link: "https://umamigirl.com/miso-roasted-brussels-sprouts/",
          notes: "Prep on the 24th."
@@ -75,7 +74,7 @@ defmodule CookingScheduler.Meals.Starter do
     ]
   end
 
-  defp oven(name, gas_mark, cook, buffer, rest, prep, extra) do
+  defp oven(name, gas_mark, cook, rest, prep, extra) do
     {Map.merge(
        %{
          name: name,
@@ -84,7 +83,6 @@ defmodule CookingScheduler.Meals.Starter do
          temp_unit: :gas_mark,
          prep_minutes: prep,
          cook_minutes: cook,
-         buffer_minutes: buffer,
          rest_minutes: rest
        },
        Map.new(extra)

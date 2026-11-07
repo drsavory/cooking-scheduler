@@ -358,13 +358,6 @@ defmodule CookingSchedulerWeb.DishLive do
                 />
                 <.box
                   locked={not @editing}
-                  f={@dish_form[:buffer_minutes]}
-                  label="+ Buffer"
-                  placeholder="0m"
-                  phx-debounce="400"
-                />
-                <.box
-                  locked={not @editing}
                   f={@dish_form[:rest_minutes]}
                   label="Rest"
                   placeholder="0m"

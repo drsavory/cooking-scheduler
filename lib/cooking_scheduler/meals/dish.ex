@@ -11,7 +11,7 @@ defmodule CookingScheduler.Meals.Dish do
   alias CookingScheduler.Kitchen.Appliance
 
   # The planning values that get copied between a dish and a meal dish.
-  @template ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes buffer_minutes
+  @template ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
                rest_minutes notes link)a
 
   schema "dishes" do
@@ -23,7 +23,6 @@ defmodule CookingScheduler.Meals.Dish do
     field :temp_unit, Ecto.Enum, values: Appliance.temp_units()
     field :prep_minutes, Duration, default: 0
     field :cook_minutes, Duration, default: 0
-    field :buffer_minutes, Duration, default: 0
     field :rest_minutes, Duration, default: 0
     field :notes, :string
     field :link, :string

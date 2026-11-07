@@ -22,7 +22,6 @@ defmodule CookingScheduler.PlannerTest do
         temp_unit: :gas_mark,
         prep_minutes: 0,
         cook_minutes: 60,
-        buffer_minutes: 0,
         rest_minutes: 0
       },
       attrs
@@ -31,8 +30,8 @@ defmodule CookingScheduler.PlannerTest do
 
   defp entry(entries, id), do: Enum.find(entries, &(&1.dish.id == id))
 
-  test "times count back from serving, including buffer and rest" do
-    d = dish(1, prep_minutes: 60, cook_minutes: 250, buffer_minutes: 20, rest_minutes: 120)
+  test "times count back from serving, including rest" do
+    d = dish(1, prep_minutes: 60, cook_minutes: 270, rest_minutes: 120)
     [e] = Planner.plan([d], @serve, [oven(1, "Oven")])
 
     assert e.out_at == @serve - 120

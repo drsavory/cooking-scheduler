@@ -14,7 +14,7 @@ details, and nowhere to record what goes into it.
 ### Dish detail view
 
 Every dish has a detail page showing its cooking details (method, heat,
-prep / cook / buffer / rest times, notes, recipe link) and its ingredients.
+prep / cook / rest times, notes, recipe link) and its ingredients.
 
 | Dish | Route | Reached from |
 |------|-------|--------------|

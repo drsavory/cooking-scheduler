@@ -121,10 +121,9 @@ defmodule CookingSchedulerWeb.DishFormLive do
           options={[{"Small", :small}, {"Medium", :medium}, {"Large", :large}]}
         />
 
-        <div class="grid grid-cols-2 gap-x-4 sm:grid-cols-4">
+        <div class="grid grid-cols-3 gap-x-4">
           <.duration field={@form[:prep_minutes]} label="Prep" />
           <.duration field={@form[:cook_minutes]} label="Cook" />
-          <.duration field={@form[:buffer_minutes]} label="+ Buffer" />
           <.duration field={@form[:rest_minutes]} label="Rest" />
         </div>
 
