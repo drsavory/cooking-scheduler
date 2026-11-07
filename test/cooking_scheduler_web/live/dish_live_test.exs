@@ -287,4 +287,17 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       assert Meals.list_dish_ingredients(Meals.get_dish!(dish.id)) == []
     end
   end
+
+  test "tags on a saved dish can be edited", %{conn: conn} do
+    {:ok, saved} = Meals.create_saved_dish(%{name: "Sprouts", method: :appliance, tags: ["veg"]})
+    {:ok, lv, _} = live(conn, ~p"/dishes/#{saved.id}")
+
+    assert has_element?(lv, "#tag-option-veg")
+    refute has_element?(lv, "#tag-option-main")
+
+    lv |> element("#edit-dish") |> render_click()
+    lv |> form("#dish-form", dish: %{tags: ["veg", "side"]}) |> render_submit()
+
+    assert Meals.get_saved_dish!(saved.id).tags == ["veg", "side"]
+  end
 end

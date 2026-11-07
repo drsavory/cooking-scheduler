@@ -40,4 +40,21 @@ defmodule CookingSchedulerWeb.DishFormLiveTest do
     assert has_element?(lv, "#dish-form select[name='saved_dish[ring_size]']")
     refute has_element?(lv, "#dish-form input[name='saved_dish[temp]']")
   end
+
+  test "saves picked and typed tags, tidied", %{conn: conn} do
+    {:ok, lv, _} = live(conn, ~p"/dishes/new")
+
+    lv
+    |> form("#dish-form",
+      saved_dish: %{
+        name: "Gravy",
+        temp: "6",
+        tags: ["sauce", "main"],
+        custom_tags: " Festive, sauce ,"
+      }
+    )
+    |> render_submit()
+
+    assert [%{tags: ["sauce", "main", "festive"]}] = Meals.list_saved_dishes()
+  end
 end

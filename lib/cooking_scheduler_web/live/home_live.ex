@@ -19,13 +19,23 @@ defmodule CookingSchedulerWeb.HomeLive do
   end
 
   defp load_meals(socket) do
+    saved = Meals.list_saved_dishes()
+
     socket
     |> assign(:meals, Meals.list_meal_summaries())
-    |> assign(:saved, Meals.list_saved_dishes())
+    |> assign(:saved, saved)
+    |> assign(:tags, saved |> Enum.flat_map(& &1.tags) |> Enum.frequencies() |> Enum.sort())
+    |> assign_new(:tag, fn -> nil end)
     |> assign(:usage, Meals.usage_by_saved_dish())
   end
 
   @impl true
+  def handle_event("filter_tag", %{"tag" => tag}, socket) do
+    # Tapping the active tag again clears the filter.
+    tag = if tag in ["", socket.assigns.tag], do: nil, else: tag
+    {:noreply, assign(socket, :tag, tag)}
+  end
+
   def handle_event("new_meal", %{"from" => from}, socket) do
     {:ok, meal} =
       case from do
@@ -135,8 +145,13 @@ defmodule CookingSchedulerWeb.HomeLive do
     """
   end
 
+  defp visible(saved, nil), do: saved
+  defp visible(saved, tag), do: Enum.filter(saved, &(tag in &1.tags))
+
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, :shown, visible(assigns.saved, assigns.tag))
+
     ~H"""
     <Layouts.app flash={@flash}>
       <section class="pop-in">
@@ -321,9 +336,40 @@ defmodule CookingSchedulerWeb.HomeLive do
           No dishes yet. Create one, or add dishes while planning a meal.
         </p>
 
+        <div :if={@tags != []} id="tag-filter" class="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            id="tag-all"
+            phx-click="filter_tag"
+            phx-value-tag=""
+            class={[
+              "rounded-full border px-3 py-1 text-sm transition",
+              (@tag == nil && "border-primary bg-primary/15 font-semibold text-primary") ||
+                "border-base-300 hover:border-primary/50"
+            ]}
+          >
+            All
+          </button>
+          <button
+            :for={{tag, count} <- @tags}
+            type="button"
+            id={"tag-filter-#{tag}"}
+            phx-click="filter_tag"
+            phx-value-tag={tag}
+            aria-pressed={to_string(@tag == tag)}
+            class={[
+              "rounded-full border px-3 py-1 text-sm capitalize transition",
+              (@tag == tag && "border-primary bg-primary/15 font-semibold text-primary") ||
+                "border-base-300 hover:border-primary/50"
+            ]}
+          >
+            {tag} <span class="text-xs opacity-60">{count}</span>
+          </button>
+        </div>
+
         <ul :if={@saved != []} class="grid gap-3 sm:grid-cols-2">
           <li
-            :for={{d, i} <- Enum.with_index(@saved)}
+            :for={{d, i} <- Enum.with_index(@shown)}
             id={"dish-#{d.id}"}
             style={stagger(i)}
             class="glass glass-lift pop-in group relative flex items-center gap-3 rounded-2xl p-3 pr-2"
@@ -348,6 +394,14 @@ defmodule CookingSchedulerWeb.HomeLive do
                   "meal",
                   "meals"
                 )}
+              </div>
+              <div :if={d.tags != []} id={"dish-tags-#{d.id}"} class="mt-1 flex flex-wrap gap-1">
+                <span
+                  :for={tag <- d.tags}
+                  class="rounded-full bg-base-content/10 px-2 py-0.5 text-[11px] capitalize"
+                >
+                  {tag}
+                </span>
               </div>
             </div>
             <.confirm_button

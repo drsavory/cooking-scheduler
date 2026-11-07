@@ -27,6 +27,10 @@ defmodule CookingScheduler.Meals.SavedDish do
     field :rest_minutes, Duration, default: 0
     field :notes, :string
     field :link, :string
+    # Free-form labels ("protein", "veg", ...). Library-only: not copied into meals.
+    field :tags, {:array, :string}, default: []
+    # Form input: extra comma-separated tags, merged into `tags` on save.
+    field :custom_tags, :string, virtual: true
 
     has_many :dishes, CookingScheduler.Meals.Dish
     has_many :dish_ingredients, CookingScheduler.Meals.DishIngredient
@@ -36,12 +40,38 @@ defmodule CookingScheduler.Meals.SavedDish do
 
   def template_fields, do: @template
 
+  @suggested_tags ~w(main protein veg carbs side starter dessert sauce)
+
+  @doc "Tags offered as one-tap choices; anyone can add their own too."
+  def suggested_tags, do: @suggested_tags
+
   def changeset(saved, attrs) do
     saved
-    |> cast(attrs, @template)
+    |> cast(attrs, @template ++ [:tags, :custom_tags])
+    |> merge_tags()
     |> validate_required([:name, :method])
     |> validate_length(:name, max: 80)
     |> validate_by_method()
+  end
+
+  # Tidies the picked tags and folds in any typed ones: lowercase, trimmed, no blanks or repeats.
+  defp merge_tags(changeset) do
+    typed = changeset |> get_change(:custom_tags, "") |> String.split(",")
+
+    tags =
+      (get_field(changeset, :tags) ++ typed)
+      |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    changeset
+    |> put_change(:tags, tags)
+    |> delete_change(:custom_tags)
+    |> validate_change(:tags, fn :tags, tags ->
+      if Enum.any?(tags, &(String.length(&1) > 24)),
+        do: [tags: "must be 24 characters or fewer each"],
+        else: []
+    end)
   end
 
   # Mirrors `Dish`, so a saved dish can always be copied into a meal.

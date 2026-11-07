@@ -119,6 +119,22 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       refute has_element?(lv, "#dish-#{d.id}")
     end
 
+    test "dishes show their tags and can be filtered by tag", %{conn: conn} do
+      {:ok, beef} =
+        Meals.create_saved_dish(%{name: "Beef", method: :appliance, tags: ["main", "protein"]})
+
+      {:ok, peas} = Meals.create_saved_dish(%{name: "Peas", method: :appliance, tags: ["veg"]})
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      assert has_element?(lv, "#dish-tags-#{beef.id}", "protein")
+      lv |> element("#tag-filter-veg") |> render_click()
+      assert has_element?(lv, "#dish-#{peas.id}")
+      refute has_element?(lv, "#dish-#{beef.id}")
+
+      lv |> element("#tag-filter-veg") |> render_click()
+      assert has_element?(lv, "#dish-#{beef.id}")
+    end
+
     test "destructive actions only happen when confirmed, via an in-app dialog", %{conn: conn} do
       {:ok, m} = Meals.create_meal(%{name: "Dinner"})
       {:ok, lv, html} = live(conn, ~p"/")

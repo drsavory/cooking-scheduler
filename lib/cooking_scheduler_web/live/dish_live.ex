@@ -272,6 +272,18 @@ defmodule CookingSchedulerWeb.DishLive do
           </div>
         </header>
 
+        <section :if={not meal_dish?(@dish)} id="dish-tags" class="mt-6">
+          <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
+            Tags
+          </h2>
+          <.tag_picker
+            field={@dish_form[:tags]}
+            custom={@dish_form[:custom_tags]}
+            suggested={SavedDish.suggested_tags()}
+            locked={not @editing}
+          />
+        </section>
+
         <section id="dish-details" class="mt-6">
           <h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
             Cooking

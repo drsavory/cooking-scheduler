@@ -124,6 +124,66 @@ defmodule CookingSchedulerWeb.CoreComponents do
   end
 
   @doc """
+  Tag chips for a dish. Editable: one-tap checkboxes for the suggested tags (plus any tag the
+  dish already has) and a box for new ones. Locked: just the chosen tags.
+  """
+  attr :field, Phoenix.HTML.FormField, required: true, doc: "the `:tags` field"
+  attr :custom, Phoenix.HTML.FormField, required: true, doc: "the `:custom_tags` field"
+  attr :suggested, :list, default: []
+  attr :locked, :boolean, default: false
+
+  def tag_picker(assigns) do
+    chosen = assigns.field.value || []
+    assigns = assign(assigns, chosen: chosen, options: Enum.uniq(assigns.suggested ++ chosen))
+
+    ~H"""
+    <div id={@field.id <> "-picker"}>
+      <div class="flex flex-wrap gap-2">
+        <input :if={not @locked} type="hidden" name={@field.name <> "[]"} value="" />
+        <%= for tag <- @options do %>
+          <label
+            :if={not @locked or tag in @chosen}
+            id={"tag-option-#{tag}"}
+            class={[
+              "rounded-full border px-3 py-1 text-sm capitalize transition has-[:checked]:border-primary has-[:checked]:bg-primary/15 has-[:checked]:font-semibold has-[:checked]:text-primary",
+              (@locked && "pointer-events-none border-transparent bg-base-content/10") ||
+                "cursor-pointer border-base-300 hover:border-primary/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary/40"
+            ]}
+          >
+            <input
+              type="checkbox"
+              name={@field.name <> "[]"}
+              value={tag}
+              checked={tag in @chosen}
+              disabled={@locked}
+              class="sr-only"
+            />
+            {tag}
+          </label>
+        <% end %>
+        <span :if={@locked and @chosen == []} id="no-tags" class="text-sm text-base-content/60">
+          No tags yet.
+        </span>
+      </div>
+      <input
+        :if={not @locked}
+        type="text"
+        id={@custom.id}
+        name={@custom.name}
+        value={@custom.value}
+        placeholder="Add your own, comma separated"
+        autocomplete="off"
+        aria-label="Add tags"
+        class="input input-bordered mt-3 w-full"
+      />
+      <p :for={{msg, opts} <- @field.errors} class="mt-1 text-sm text-error">
+        {translate_error({msg, opts})}
+      </p>
+    </div>
+    """
+  end
+
+  @doc """
   Renders an input with label and error messages.
 
   A `Phoenix.HTML.FormField` may be passed as argument,

@@ -78,6 +78,15 @@ defmodule CookingSchedulerWeb.DishFormLive do
       >
         <.input field={@form[:name]} type="text" label="Name" phx-debounce="400" />
 
+        <div class="mb-4">
+          <span class="mb-1 block text-sm font-semibold">Tags</span>
+          <.tag_picker
+            field={@form[:tags]}
+            custom={@form[:custom_tags]}
+            suggested={SavedDish.suggested_tags()}
+          />
+        </div>
+
         <.input
           field={@form[:method]}
           type="select"
