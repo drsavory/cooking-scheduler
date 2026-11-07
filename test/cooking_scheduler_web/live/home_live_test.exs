@@ -25,6 +25,26 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       assert setup =~ "Set up your kitchen"
     end
 
+    test "spotlight is present and answers searches", %{conn: conn} do
+      {:ok, meal} = Meals.create_meal()
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      assert has_element?(lv, "#spotlight[phx-hook]")
+      assert has_element?(lv, "#open-search")
+
+      render_hook(lv, "spotlight_search", %{"q" => meal.name})
+      assert_reply(lv, %{meals: [%{id: id}]})
+      assert id == meal.id
+
+      render_hook(lv, "spotlight_search", %{"q" => "zzz-no-match"})
+      assert_reply(lv, %{meals: [], dishes: []})
+    end
+
+    test "spotlight is available on other pages", %{conn: conn} do
+      {:ok, lv, _} = live(conn, ~p"/dishes/new")
+      assert has_element?(lv, "#spotlight[phx-hook]")
+    end
+
     test "create dish goes to the dish form", %{conn: conn} do
       {:ok, lv, _} = live(conn, ~p"/")
 

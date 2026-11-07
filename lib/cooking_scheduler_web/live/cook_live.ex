@@ -34,6 +34,7 @@ defmodule CookingSchedulerWeb.CookLive do
     lives = Cooking.lives(socket.assigns.entries, now)
     projected = Cooking.projected_serve(lives, serve)
     tasks = Cooking.tasks(lives, now)
+    open = Enum.reject(tasks, &(&1.state == :done))
 
     assign(socket,
       now: now,
@@ -41,7 +42,8 @@ defmodule CookingSchedulerWeb.CookLive do
       lives: lives,
       projected: projected,
       behind: projected - serve,
-      pending: Enum.reject(tasks, &(&1.state == :done)),
+      pending: Enum.reject(open, &(&1.kind == :out)),
+      next_task: Enum.find(open, &(&1.kind != :out or &1.entry.dish.cook_started_at != nil)),
       done: tasks |> Enum.filter(&(&1.state == :done)) |> Enum.reverse(),
       overview: overview(lives, now, serve, projected),
       cooking: Enum.filter(lives, &(&1.phase == :cooking)),
@@ -264,6 +266,10 @@ defmodule CookingSchedulerWeb.CookLive do
   defp button_label(:start), do: "Started"
   defp button_label(:out), do: "Done"
 
+  defp out_label(%{method: :oven}), do: "Take out"
+  defp out_label(%{method: :ring}), do: "Off the heat"
+  defp out_label(_dish), do: "Done"
+
   defp temp_label(%{temp: nil}), do: nil
 
   defp temp_label(%{temp: t, temp_unit: :gas_mark}),
@@ -398,6 +404,18 @@ defmodule CookingSchedulerWeb.CookLive do
           +{m}m
         </button>
       </div>
+      <button
+        id={"out-#{@dish.id}"}
+        class={[
+          "btn btn-sm mt-3 w-full rounded-full",
+          (@live.out_at <= @now && "btn-primary") || "btn-soft"
+        ]}
+        phx-click="complete"
+        phx-value-dish={@dish.id}
+        phx-value-kind="out"
+      >
+        <.icon name="hero-check" class="size-4" /> {out_label(@dish)}
+      </button>
     </li>
     """
   end
@@ -562,8 +580,37 @@ defmodule CookingSchedulerWeb.CookLive do
         <div class="flex items-baseline gap-2">
           <span class="text-xs font-medium uppercase tracking-wider text-primary-content/70">Now</span>
           <span id="clock" class="text-3xl font-extrabold tabular-nums leading-none">
-            {Duration.clock(@now)}
+            {Duration.clock(@now)}<span
+              id="clock-seconds"
+              phx-hook=".ClockSeconds"
+              phx-update="ignore"
+              class="text-xl font-bold text-primary-content/70"
+            >:00</span>
           </span>
+          <script :type={Phoenix.LiveView.ColocatedHook} name=".ClockSeconds">
+            export default {
+              mounted() {
+                const tick = () => {
+                  this.el.textContent = ":" + String(new Date().getSeconds()).padStart(2, "0")
+                }
+                tick()
+                this.timer = setInterval(tick, 1000)
+              },
+              destroyed() {
+                clearInterval(this.timer)
+              }
+            }
+          </script>
+        </div>
+
+        <div :if={@next_task} id="next-action" class="flex items-baseline gap-2">
+          <span class="text-xs font-medium uppercase tracking-wider text-primary-content/70">
+            Next
+          </span>
+          <span id="next-action-time" class="text-2xl font-extrabold tabular-nums leading-none">
+            {if @next_task.at <= @now, do: "now", else: Duration.format(@next_task.at - @now)}
+          </span>
+          <span class="max-w-48 truncate text-sm text-primary-content/80">{verb(@next_task)}</span>
         </div>
 
         <div class="flex items-center gap-2">

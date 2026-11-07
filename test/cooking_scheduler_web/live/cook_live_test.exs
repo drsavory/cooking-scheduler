@@ -122,7 +122,8 @@ defmodule CookingSchedulerWeb.CookLiveTest do
 
     set_clock(11, 30)
     send(lv.pid, :tick)
-    lv |> element("#task-#{turkey.id}-out button") |> render_click()
+    refute has_element?(lv, "#task-#{turkey.id}-out")
+    lv |> element("#out-#{turkey.id}") |> render_click()
 
     assert has_element?(lv, "#resting", "Turkey (6.1 kg)")
     assert has_element?(lv, "#resting", "13:30")

@@ -17,15 +17,17 @@ defmodule CookingSchedulerWeb.Router do
   scope "/", CookingSchedulerWeb do
     pipe_through :browser
 
-    live "/", HomeLive
-    live "/setup", SetupLive
-    live "/dishes/new", DishFormLive, :new
-    live "/dishes/:id", DishLive, :saved
-    live "/meals/:meal_id/dishes/:id", DishLive, :meal
-    live "/meals/:id/plan", PlanLive
-    live "/meals/:id/prep", PrepLive
-    live "/meals/:id/shopping", ShoppingLive
-    live "/meals/:id/cook", CookLive
+    live_session :default, on_mount: CookingSchedulerWeb.SearchHook do
+      live "/", HomeLive
+      live "/setup", SetupLive
+      live "/dishes/new", DishFormLive, :new
+      live "/dishes/:id", DishLive, :saved
+      live "/meals/:meal_id/dishes/:id", DishLive, :meal
+      live "/meals/:id/plan", PlanLive
+      live "/meals/:id/prep", PrepLive
+      live "/meals/:id/shopping", ShoppingLive
+      live "/meals/:id/cook", CookLive
+    end
   end
 
   # Other scopes may use custom stacks.
