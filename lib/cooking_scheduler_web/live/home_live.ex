@@ -41,6 +41,16 @@ defmodule CookingSchedulerWeb.HomeLive do
     {:noreply, load_meals(socket)}
   end
 
+  def handle_event("finish_meal", %{"id" => id}, socket) do
+    {:ok, _} = id |> Meals.get_meal!() |> Meals.finish_meal()
+    {:noreply, load_meals(socket)}
+  end
+
+  def handle_event("reset_meal", %{"id" => id}, socket) do
+    :ok = id |> Meals.get_meal!() |> Meals.reset_cooking()
+    {:noreply, load_meals(socket)}
+  end
+
   def handle_event("delete_dish", %{"id" => id}, socket) do
     {:ok, _} = id |> Meals.get_saved_dish!() |> Meals.delete_saved_dish()
     {:noreply, load_meals(socket)}
@@ -189,15 +199,18 @@ defmodule CookingSchedulerWeb.HomeLive do
                 </p>
                 <div class="mt-2"><.status_pill status={s.status} delay={s.delay} /></div>
               </div>
-              <button
+              <.confirm_button
+                id={"delete-meal-#{s.meal.id}"}
+                title={"Delete #{s.meal.name}?"}
+                message={"This removes the meal and its #{plural(s.dishes, "dish", "dishes")}. This can't be undone."}
+                confirm_label="Delete"
+                tone={:danger}
+                on_confirm={JS.push("delete_meal", value: %{id: s.meal.id})}
                 class="btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-error focus:opacity-100"
-                phx-click="delete_meal"
-                phx-value-id={s.meal.id}
-                data-confirm={"Delete #{s.meal.name} and its #{s.dishes} dishes? This can't be undone."}
                 aria-label={"Delete #{s.meal.name}"}
               >
                 <.icon name="hero-trash" class="size-4" />
-              </button>
+              </.confirm_button>
             </div>
 
             <div class="mt-4 flex flex-wrap gap-2">
@@ -207,6 +220,31 @@ defmodule CookingSchedulerWeb.HomeLive do
                 icon="hero-clock-micro"
                 value={"#{Duration.format(s.prep_minutes)} prep"}
               />
+            </div>
+
+            <div :if={s.status != :planned} class="mt-4 flex gap-2 text-sm">
+              <.confirm_button
+                :if={s.status == :cooking}
+                id={"finish-meal-#{s.meal.id}"}
+                title="Finish cooking now?"
+                message="Dishes that aren't done yet are left out of the result."
+                confirm_label="Finish"
+                on_confirm={JS.push("finish_meal", value: %{id: s.meal.id})}
+                class="btn btn-xs btn-ghost rounded-full"
+              >
+                <.icon name="hero-flag-micro" class="size-3.5" /> Finish cooking
+              </.confirm_button>
+              <.confirm_button
+                id={"reset-meal-#{s.meal.id}"}
+                title="Reset cooking progress?"
+                message="Started and finished marks are cleared. The plan stays."
+                confirm_label="Reset"
+                tone={:danger}
+                on_confirm={JS.push("reset_meal", value: %{id: s.meal.id})}
+                class="btn btn-xs btn-ghost rounded-full"
+              >
+                <.icon name="hero-arrow-uturn-left-micro" class="size-3.5" /> Reset progress
+              </.confirm_button>
             </div>
 
             <div class="mt-5 flex gap-2">
@@ -273,15 +311,18 @@ defmodule CookingSchedulerWeb.HomeLive do
             >
               <.icon name="hero-pencil-square" class="size-4" />
             </.link>
-            <button
+            <.confirm_button
+              id={"delete-dish-#{d.id}"}
+              title={"Delete #{d.name}?"}
+              message="Meals that already use it keep their copy."
+              confirm_label="Delete"
+              tone={:danger}
+              on_confirm={JS.push("delete_dish", value: %{id: d.id})}
               class="btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-error focus:opacity-100"
-              phx-click="delete_dish"
-              phx-value-id={d.id}
-              data-confirm={"Delete #{d.name}? Meals that already use it keep their copy."}
               aria-label={"Delete #{d.name}"}
             >
               <.icon name="hero-trash" class="size-4" />
-            </button>
+            </.confirm_button>
           </li>
         </ul>
       </section>

@@ -452,6 +452,108 @@ defmodule CookingSchedulerWeb.CoreComponents do
     """
   end
 
+  @doc """
+  A button that asks for confirmation in an in-app glass dialog before doing anything.
+
+  **Always use this instead of `data-confirm`**; never use browser/system confirmation
+  dialogs. The trigger is the button; `on_confirm` runs only if the user confirms.
+
+  ## Examples
+
+      <.confirm_button
+        id={"delete-meal-\#{meal.id}"}
+        title="Delete Christmas?"
+        message="This can't be undone."
+        confirm_label="Delete"
+        on_confirm={JS.push("delete_meal", value: %{id: meal.id})}
+        class="btn btn-ghost"
+      >
+        <.icon name="hero-trash" /> Delete
+      </.confirm_button>
+  """
+  attr :id, :string, required: true, doc: "unique id; the dialog is `\#{id}-dialog`"
+  attr :title, :string, required: true
+  attr :message, :string, default: nil
+  attr :confirm_label, :string, default: "Confirm"
+  attr :cancel_label, :string, default: "Cancel"
+  attr :tone, :atom, values: [:danger, :primary], default: :primary
+  attr :on_confirm, JS, required: true
+  attr :class, :any, default: nil
+  attr :rest, :global, doc: "extra attributes for the trigger button, e.g. aria-label"
+  slot :inner_block, required: true, doc: "the trigger button's content"
+
+  def confirm_button(assigns) do
+    assigns = assign(assigns, :dialog, "#{assigns.id}-dialog")
+
+    ~H"""
+    <button
+      type="button"
+      id={@id}
+      class={@class}
+      phx-click={
+        JS.show(
+          to: "#" <> @dialog,
+          display: "flex",
+          transition: {"transition-opacity ease-out duration-200", "opacity-0", "opacity-100"}
+        )
+        |> JS.focus_first(to: "#" <> @dialog <> "-panel")
+      }
+      {@rest}
+    >
+      {render_slot(@inner_block)}
+    </button>
+
+    <%!-- Teleported to <body>: glass cards create their own containing block, which would
+         otherwise trap this fixed overlay inside the card. --%>
+    <.portal id={@id <> "-portal"} target="body">
+      <div
+        id={@dialog}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={@dialog <> "-title"}
+        class="fixed inset-0 z-[100] hidden items-center justify-center p-4"
+        phx-window-keydown={JS.hide(to: "#" <> @dialog)}
+        phx-key="escape"
+      >
+        <div
+          class="absolute inset-0 bg-base-content/30 backdrop-blur-sm"
+          phx-click={JS.hide(to: "#" <> @dialog)}
+        >
+        </div>
+        <div
+          id={@dialog <> "-panel"}
+          class="glass pop-in relative w-full max-w-sm rounded-[1.75rem] p-6 shadow-2xl"
+        >
+          <h2 id={@dialog <> "-title"} class="text-lg font-bold tracking-tight">{@title}</h2>
+          <p :if={@message} class="mt-2 text-sm text-base-content/70">{@message}</p>
+          <div class="mt-6 flex justify-end gap-2">
+            <button
+              id={@dialog <> "-cancel"}
+              type="button"
+              class="btn btn-glass rounded-full"
+              phx-click={JS.hide(to: "#" <> @dialog)}
+            >
+              {@cancel_label}
+            </button>
+            <button
+              id={@dialog <> "-confirm"}
+              type="button"
+              class={[
+                "btn rounded-full",
+                @tone == :primary && "btn-glow",
+                @tone == :danger && "btn-error"
+              ]}
+              phx-click={JS.hide(@on_confirm, to: "#" <> @dialog)}
+            >
+              {@confirm_label}
+            </button>
+          </div>
+        </div>
+      </div>
+    </.portal>
+    """
+  end
+
   ## JS Commands
 
   def show(js \\ %JS{}, selector) do

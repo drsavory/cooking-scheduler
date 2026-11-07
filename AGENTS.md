@@ -38,6 +38,8 @@ custom classes must fully style the input
 
 ### UI/UX & design guidelines
 
+- **Never** use system/browser confirmation dialogs (`data-confirm`, `window.confirm`, `alert`). For anything that needs confirming (deleting, resetting, ending), **always** use the `<.confirm_button>` component from `core_components.ex`; it shows an in-app glass dialog and only runs `on_confirm` when confirmed. In tests, confirm with the `confirm_dialog(lv, id)` helper from `ConnCase`
+
 - **Produce world-class UI designs** with a focus on usability, aesthetics, and modern design principles
 - Implement **subtle micro-interactions** (e.g., button hover effects, and smooth transitions)
 - Ensure **clean typography, spacing, and layout balance** for a refined, premium look

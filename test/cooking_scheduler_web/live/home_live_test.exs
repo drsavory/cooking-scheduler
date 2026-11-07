@@ -76,13 +76,46 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       end
     end
 
+    test "a meal that's being cooked can be finished or reset from home", %{conn: conn} do
+      {:ok, m} = Meals.create_meal(%{name: "Dinner"})
+      {:ok, d} = Meals.create_dish(m, %{name: "Roast", method: :appliance, cook_minutes: 60})
+      {:ok, _} = Meals.start_cooking(d, 600)
+
+      {:ok, lv, html} = live(conn, ~p"/")
+      assert html =~ "Cooking now"
+
+      confirm_dialog(lv, "finish-meal-#{m.id}")
+      refute has_element?(lv, "#finish-meal-#{m.id}")
+      assert has_element?(lv, "#meal-#{m.id}", "On time")
+
+      confirm_dialog(lv, "reset-meal-#{m.id}")
+      refute has_element?(lv, "#reset-meal-#{m.id}")
+      assert has_element?(lv, "#meal-#{m.id}", "Planned")
+      assert Meals.get_dish!(d.id).cook_started_at == nil
+    end
+
     test "lists dishes and can delete one", %{conn: conn} do
       {:ok, d} = Meals.create_saved_dish(%{name: "Gravy", method: :appliance})
       {:ok, lv, _} = live(conn, ~p"/")
 
       assert has_element?(lv, "#dish-#{d.id}", "Gravy")
-      lv |> element("#dish-#{d.id} button[aria-label^=Delete]") |> render_click()
+      confirm_dialog(lv, "delete-dish-#{d.id}")
       refute has_element?(lv, "#dish-#{d.id}")
+    end
+
+    test "destructive actions only happen when confirmed, via an in-app dialog", %{conn: conn} do
+      {:ok, m} = Meals.create_meal(%{name: "Dinner"})
+      {:ok, lv, html} = live(conn, ~p"/")
+
+      # the trigger only opens the dialog (client-side); rendering never deletes anything
+      assert has_element?(lv, "#delete-meal-#{m.id}")
+      assert Meals.get_meal!(m.id)
+
+      assert render(lv) =~ ~s|id="delete-meal-#{m.id}-dialog-cancel"|
+      refute html =~ "data-confirm"
+
+      confirm_dialog(lv, "delete-meal-#{m.id}")
+      assert Meals.list_meals() == []
     end
   end
 end

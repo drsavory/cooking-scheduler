@@ -31,6 +31,39 @@ defmodule CookingSchedulerWeb.ConnCase do
     end
   end
 
+  @doc """
+  Confirms a `<.confirm_button id={id}>` dialog: presses the dialog's Confirm button by
+  sending the event it pushes. (LiveViewTest can't see inside the dialog, which is
+  teleported to `<body>`.) Raises if the dialog doesn't exist.
+  """
+  def confirm_dialog(lv, id) do
+    html = Phoenix.LiveViewTest.render(lv)
+
+    [_, attrs] =
+      Regex.run(
+        ~r/<button[^>]*id="#{Regex.escape(id)}-dialog-confirm"[^>]*phx-click="([^"]*)"/,
+        html
+      ) ||
+        raise "no confirm dialog #{inspect(id)} on the page"
+
+    commands = attrs |> unescape() |> JSON.decode!()
+
+    Enum.reduce(commands, :ok, fn
+      ["push", %{"event" => event} = opts], _ ->
+        Phoenix.LiveViewTest.render_hook(lv, event, Map.get(opts, "value", %{}))
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp unescape(text) do
+    text
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&amp;", "&")
+  end
+
   setup tags do
     CookingScheduler.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}

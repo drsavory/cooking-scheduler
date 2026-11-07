@@ -98,6 +98,11 @@ defmodule CookingSchedulerWeb.CookLive do
     {:noreply, load(socket)}
   end
 
+  def handle_event("finish", _params, socket) do
+    {:ok, _} = Meals.finish_meal(socket.assigns.meal)
+    {:noreply, push_navigate(socket, to: ~p"/")}
+  end
+
   def handle_event("reset", _params, socket) do
     :ok = Meals.reset_cooking(socket.assigns.meal)
     {:noreply, load(socket)}
@@ -420,7 +425,19 @@ defmodule CookingSchedulerWeb.CookLive do
             </ul>
           </section>
 
-          <button class="btn btn-ghost btn-xs" phx-click="reset">Reset progress</button>
+          <div class="flex gap-2">
+            <.confirm_button
+              id="finish-cooking"
+              title="Finish cooking now?"
+              message="Dishes that aren't done yet are left out of the result."
+              confirm_label="Finish"
+              on_confirm={JS.push("finish")}
+              class="btn btn-xs rounded-full"
+            >
+              <.icon name="hero-flag-micro" class="size-3.5" /> Finish cooking
+            </.confirm_button>
+            <button class="btn btn-ghost btn-xs" phx-click="reset">Reset progress</button>
+          </div>
         </aside>
       </div>
     </Layouts.app>

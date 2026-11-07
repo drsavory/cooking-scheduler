@@ -180,4 +180,13 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     {:ok, _lv, html} = live(conn, cook_path())
     assert html =~ "Nothing to cook yet"
   end
+
+  test "finishing cooking ends the meal and returns home", %{conn: conn, turkey: turkey} do
+    {:ok, _} = Meals.start_cooking(turkey, 420)
+    {:ok, lv, _} = live(conn, cook_path())
+
+    confirm_dialog(lv, "finish-cooking")
+    assert_redirect(lv, ~p"/")
+    assert [%{status: :cooked}] = Meals.list_meal_summaries()
+  end
 end

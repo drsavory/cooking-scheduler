@@ -7,6 +7,8 @@ defmodule CookingScheduler.Meals.Meal do
     field :name, :string
     field :date, :date
     field :serve_at, :time
+    # Set (not cast) when the cook ends the meal early.
+    field :finished_at, :utc_datetime
 
     has_many :dishes, CookingScheduler.Meals.Dish
 

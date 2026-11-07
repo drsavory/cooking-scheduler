@@ -21,8 +21,8 @@ defmodule CookingScheduler.Meals do
   Every meal, most recent first, with what the home page shows about each:
   `%{meal:, dishes:, prep_minutes:, status:, delay:}`.
 
-  `status` is `:planned` (nothing started), `:cooking` or `:cooked` (every timed dish is
-  done). `delay` is how many minutes after the serving time dinner was actually ready (0 if on
+  `status` is `:planned` (nothing started), `:cooking`, or `:cooked` (every timed dish is
+  done, or the meal was finished early with `finish_meal/1`). `delay` is how many minutes after the serving time dinner was actually ready (0 if on
   time), and nil until the meal is cooked.
   """
   def list_meal_summaries do
@@ -40,14 +40,17 @@ defmodule CookingScheduler.Meals do
     status =
       cond do
         started == [] -> :planned
-        Enum.all?(timed, & &1.cook_done_at) -> :cooked
+        meal.finished_at || Enum.all?(timed, & &1.cook_done_at) -> :cooked
         true -> :cooking
       end
 
+    # Dishes skipped when a meal is finished early don't count towards the delay.
     delay =
       if status == :cooked do
-        ready = timed |> Enum.map(&(&1.cook_done_at + &1.rest_minutes)) |> Enum.max()
-        max(ready - Meal.serve_minutes(meal), 0)
+        ready =
+          for d <- timed, d.cook_done_at, do: d.cook_done_at + d.rest_minutes
+
+        max(Enum.max(ready, fn -> 0 end) - Meal.serve_minutes(meal), 0)
       end
 
     %{
@@ -194,11 +197,23 @@ defmodule CookingScheduler.Meals do
       |> Ecto.Changeset.change(extra_minutes: max(d.extra_minutes + minutes, 0))
       |> Repo.update()
 
-  @doc "Clears started/finished/extra-time on a meal's dishes (keeps the plan and prepped ticks)."
+  @doc "Ends the meal now, even if some dishes weren't cooked. Undo with `reset_cooking/1`."
+  def finish_meal(%Meal{} = meal) do
+    meal
+    |> Ecto.Changeset.change(finished_at: DateTime.utc_now(:second))
+    |> Repo.update()
+  end
+
+  @doc """
+  Clears started/finished/extra-time on a meal's dishes and its finished mark (keeps the
+  plan and prepped ticks), taking it back to "planned".
+  """
   def reset_cooking(%Meal{id: id}) do
     Repo.update_all(from(d in Dish, where: d.meal_id == ^id),
       set: [cook_started_at: nil, cook_done_at: nil, extra_minutes: 0]
     )
+
+    Repo.update_all(from(m in Meal, where: m.id == ^id), set: [finished_at: nil])
 
     :ok
   end
