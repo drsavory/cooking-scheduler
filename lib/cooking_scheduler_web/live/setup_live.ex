@@ -182,7 +182,7 @@ defmodule CookingSchedulerWeb.SetupLive do
           </.confirm_button>
         </div>
 
-        <div :if={@appliance.kind == :oven} class="grid gap-x-4 sm:grid-cols-3">
+        <div :if={@appliance.kind == :oven} class="grid gap-x-4 sm:grid-cols-4">
           <.input
             field={@form[:temp_unit]}
             type="select"
@@ -199,6 +199,14 @@ defmodule CookingSchedulerWeb.SetupLive do
             type="number"
             step="any"
             label="Highest"
+            phx-debounce="500"
+          />
+          <.input
+            field={@form[:preheat_minutes]}
+            type="number"
+            min="0"
+            max="120"
+            label="Preheat (min)"
             phx-debounce="500"
           />
         </div>

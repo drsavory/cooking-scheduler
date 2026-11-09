@@ -207,3 +207,29 @@ body { font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiase
   .aurora-blob, .gradient-text, .dot-live { animation: none; }
   .glass, .glass-lift:hover, .btn-glow:hover { transition: none; transform: none; }
 }
+
+/* Kitchen mode (cook screen): everything a size up for reading at arm's length. */
+html.kitchen-big {
+  font-size: 19px;
+}
+
+/* The run sheet prints as a plain list. */
+@media print {
+  .aurora,
+  header,
+  .no-print,
+  #flash-group,
+  #spotlight {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}

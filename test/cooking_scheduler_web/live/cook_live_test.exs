@@ -205,6 +205,76 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     assert has_element?(lv, "[id^=overview-group-label-]")
     assert has_element?(lv, "#overview-tip-#{turkey.id}[role=tooltip]")
     assert has_element?(lv, "#overview-now")
-    assert has_element?(lv, "#overview-serve")
+    assert has_element?(lv, "#overview-serve-#{13 * 60 + 30}")
+  end
+
+  describe "oven tasks and alerts" do
+    test "preheating the oven is a task, ticked off and undone like any other", %{
+      conn: conn,
+      turkey: turkey
+    } do
+      set_clock(6, 40)
+      {:ok, lv, _} = live(conn, cook_path())
+      # turkey in at 07:00, the oven's default preheat is 15 minutes
+      assert has_element?(lv, "#task-#{turkey.id}-preheat", "06:45")
+      assert has_element?(lv, "#task-#{turkey.id}-preheat", "Switch on")
+      assert has_element?(lv, "#task-#{turkey.id}-preheat", "Gas mark 7")
+
+      lv |> element("#task-#{turkey.id}-preheat button") |> render_click()
+      refute has_element?(lv, "#task-#{turkey.id}-preheat")
+      assert has_element?(lv, "#done-#{turkey.id}-preheat")
+      assert has_element?(lv, "#oven-strip", "heating up")
+
+      lv |> element("#done-#{turkey.id}-preheat button", "undo") |> render_click()
+      assert has_element?(lv, "#task-#{turkey.id}-preheat")
+      assert meal().oven_marks == []
+    end
+
+    test "the oven strip shows what's in each oven", %{conn: conn, turkey: turkey} do
+      set_clock(7, 0)
+      {:ok, lv, _} = live(conn, cook_path())
+      lv |> element("#task-#{turkey.id}-start button") |> render_click()
+      assert has_element?(lv, "#oven-strip", "Turkey (6.1 kg)")
+      assert has_element?(lv, "#oven-strip", "Gas mark 7")
+    end
+
+    test "only the next few tasks are shown in full; the rest fold away", %{conn: conn} do
+      {:ok, lv, _} = live(conn, cook_path())
+      assert has_element?(lv, "#later-toggle", "Later (")
+      assert has_element?(lv, "#later")
+    end
+
+    test "the browser is told when something becomes due", %{conn: conn, turkey: turkey} do
+      set_clock(5, 50)
+      {:ok, lv, _} = live(conn, cook_path())
+      # prep the turkey is due at 06:00: not yet
+      refute_push_event(lv, "tasks_due", %{})
+
+      set_clock(5, 56)
+      send(lv.pid, :tick)
+      assert_push_event(lv, "tasks_due", %{tasks: tasks})
+      assert "Prep Turkey (6.1 kg)" in tasks
+      _ = turkey
+    end
+
+    test "has the alert and kitchen-mode controls and a run sheet link", %{conn: conn} do
+      {:ok, lv, _} = live(conn, cook_path())
+      assert has_element?(lv, "#cook-tools [data-sound]")
+      assert has_element?(lv, "#cook-tools [data-big]")
+
+      assert has_element?(
+               lv,
+               "#run-sheet[href='#{cook_path() |> String.replace("cook", "sheet")}']"
+             )
+    end
+  end
+
+  test "the run sheet lists the whole day in order", %{conn: conn} do
+    {:ok, lv, html} = live(conn, "/meals/#{meal().id}/sheet")
+    assert has_element?(lv, "#sheet-morning")
+    assert has_element?(lv, "#print-sheet")
+    assert html =~ "Switch on"
+    assert html =~ "In: Turkey (6.1 kg)"
+    assert html =~ ~r/06:45.*07:00/s
   end
 end

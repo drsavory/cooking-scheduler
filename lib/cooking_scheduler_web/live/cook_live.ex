@@ -3,7 +3,7 @@ defmodule CookingSchedulerWeb.CookLive do
 
   alias CookingScheduler.{Clock, Cooking, Duration, Kitchen, Meals, Planner, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.Meal
+  alias CookingScheduler.Meals.{Meal, MealDish}
 
   @tick_ms 15_000
 
@@ -22,40 +22,123 @@ defmodule CookingSchedulerWeb.CookLive do
   # Reads the meal and its progress from the database and derives everything shown.
   defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
 
+  # How many "Up next" tasks are shown in full before the rest fold away (ADR 0019).
+  @soon 4
+
   defp load(socket, %Meal{} = meal) do
-    entries =
-      Planner.plan(
-        Meals.list_meal_dishes(meal),
-        Meal.serve_minutes(meal),
-        Kitchen.list_appliances()
-      )
+    kitchen = Kitchen.list_appliances()
+    entries = Planner.plan(Meals.list_meal_dishes(meal), Meal.serve_minutes(meal), kitchen)
 
     socket
-    |> assign(page_title: "Cooking · #{meal.name}", meal: meal, entries: entries)
+    |> assign(
+      page_title: "Cooking · #{meal.name}",
+      meal: meal,
+      entries: entries,
+      kitchen: kitchen,
+      oven_events: Planner.oven_events(entries, kitchen)
+    )
     |> derive(Clock.now_minutes())
   end
 
   defp derive(socket, now) do
-    serve = Meal.serve_minutes(socket.assigns.meal)
-    lives = Cooking.lives(socket.assigns.entries, now)
-    projected = Cooking.projected_serve(lives, serve)
-    tasks = Cooking.tasks(lives, now)
+    %{meal: meal, entries: entries, oven_events: oven_events, kitchen: kitchen} = socket.assigns
+    serve = Meal.serve_minutes(meal)
+    lives = Cooking.lives(entries, now)
+    behind = Cooking.behind(lives)
+    projected = serve + behind
+    tasks = Cooking.tasks(lives, now, oven_events, meal.oven_marks)
     open = Enum.reject(tasks, &(&1.state == :done))
+    pending = Enum.reject(open, &(&1.kind == :out))
+    {soon, later} = Enum.split(pending, @soon)
 
-    assign(socket,
+    socket
+    |> assign(
       now: now,
       serve: serve,
       lives: lives,
       projected: projected,
-      behind: projected - serve,
-      pending: Enum.reject(open, &(&1.kind == :out)),
+      behind: behind,
+      pending: pending,
+      soon: soon,
+      later: later,
       next_task: Enum.find(open, &(&1.kind != :out or &1.entry.dish.cook_started_at != nil)),
       done: tasks |> Enum.filter(&(&1.state == :done)) |> Enum.reverse(),
       overview: overview(lives, now, serve, projected),
       cooking: Enum.filter(lives, &(&1.phase == :cooking)),
-      resting: Enum.filter(lives, &(&1.phase == :resting))
+      resting: Enum.filter(lives, &(&1.phase == :resting)),
+      ovens: oven_strip(kitchen, lives, oven_events, meal.oven_marks)
     )
+    |> alert(open)
   end
+
+  # Tell the browser when something has just become due, so it can chime (ADR 0019). The
+  # first derive after mount only remembers what's due, so reloading doesn't ring.
+  defp alert(socket, open) do
+    due =
+      for t <- open, t.state in [:now, :overdue], into: MapSet.new(), do: task_id(t)
+
+    case socket.assigns[:due] do
+      nil ->
+        assign(socket, :due, due)
+
+      before ->
+        fresh =
+          for t <- open,
+              t.state in [:now, :overdue],
+              not MapSet.member?(before, task_id(t)),
+              do: verb(t)
+
+        socket
+        |> assign(:due, due)
+        |> then(&if(fresh == [], do: &1, else: push_event(&1, "tasks_due", %{tasks: fresh})))
+    end
+  end
+
+  defp task_id(%{entry: e, kind: kind}), do: "#{e.dish.id}-#{kind}"
+
+  # One chip per oven (and other appliance in use): what's in it and at what temperature.
+  defp oven_strip(kitchen, lives, oven_events, marks) do
+    for app <- kitchen, app.kind in [:oven, :other] do
+      inside =
+        for l <- lives,
+            l.phase == :cooking,
+            l.entry.resource && l.entry.resource.id == app.id,
+            do: l
+
+      preheating =
+        inside == [] and
+          Enum.any?(
+            oven_events,
+            &(&1.kind == :preheat and &1.appliance.id == app.id and &1.id in marks)
+          )
+
+      setting =
+        case inside do
+          [l | _] ->
+            temp_label(l.entry.dish)
+
+          [] ->
+            Enum.find_value(
+              oven_events,
+              &(&1.kind == :preheat and &1.appliance.id == app.id and &1.id in marks and
+                  temp_text(&1.temp))
+            )
+        end
+
+      %{
+        appliance: app,
+        dishes: Enum.map(inside, & &1.entry.dish.name),
+        preheating: preheating,
+        setting: setting
+      }
+    end
+    |> Enum.filter(&(&1.appliance.kind == :oven or &1.dishes != []))
+  end
+
+  defp temp_text({t, :gas_mark}), do: "Gas mark #{Appliance.fmt_temp(t, :gas_mark)}"
+
+  defp temp_text({t, unit}),
+    do: "#{Appliance.fmt_temp(t, unit)} #{Appliance.temp_unit_label(unit)}"
 
   @impl true
   def handle_info(:tick, socket) do
@@ -67,6 +150,11 @@ defmodule CookingSchedulerWeb.CookLive do
   def handle_info({:meal_updated, _id}, socket), do: {:noreply, load(socket)}
 
   @impl true
+  def handle_event("complete", %{"event" => event_id}, socket) do
+    {:ok, _} = Meals.mark_oven_event(socket.assigns.meal, event_id, true)
+    {:noreply, load(socket)}
+  end
+
   def handle_event("complete", %{"dish" => id, "kind" => kind}, socket) do
     dish = Meals.get_meal_dish!(id)
     now = Clock.now_minutes()
@@ -78,6 +166,11 @@ defmodule CookingSchedulerWeb.CookLive do
         "out" -> Meals.finish_cooking(dish, now)
       end
 
+    {:noreply, load(socket)}
+  end
+
+  def handle_event("undo", %{"event" => event_id}, socket) do
+    {:ok, _} = Meals.mark_oven_event(socket.assigns.meal, event_id, false)
     {:noreply, load(socket)}
   end
 
@@ -132,11 +225,14 @@ defmodule CookingSchedulerWeb.CookLive do
 
     starts =
       Enum.map(lives, fn l ->
-        if l.entry.dish.prep_minutes > 0, do: min(l.entry.prep_at, l.cook_at), else: l.cook_at
+        if prep_today?(l.entry.dish), do: min(l.entry.prep_at, l.cook_at), else: l.cook_at
       end)
 
+    # One serve line per course (ADR 0018).
+    serves = lives |> Enum.map(& &1.entry.serve_at) |> Enum.uniq() |> Enum.sort()
+
     t0 = Enum.min([now | starts])
-    t1 = Enum.max([serve, projected, now + 30])
+    t1 = Enum.max([serve, projected, now + 30 | serves])
     span = max(t1 - t0, 1)
     pct = fn m -> Float.round((m - t0) / span * 100, 2) end
     seg = fn from, to -> %{left: pct.(from), width: max(pct.(to) - pct.(from), 0.6)} end
@@ -153,11 +249,11 @@ defmodule CookingSchedulerWeb.CookLive do
           prepped: d.prepped,
           resource: l.entry.resource,
           dish: d,
-          prep: d.prep_minutes > 0 && seg.(l.entry.prep_at, prep_to),
+          prep: prep_today?(d) && seg.(l.entry.prep_at, prep_to),
           cook: seg.(l.cook_at, l.out_at),
           rest: d.rest_minutes > 0 && seg.(l.out_at, l.ready_at),
           times: %{
-            prep: d.prep_minutes > 0 && {l.entry.prep_at, prep_to},
+            prep: prep_today?(d) && {l.entry.prep_at, prep_to},
             cook: {l.cook_at, l.out_at},
             rest: d.rest_minutes > 0 && {l.out_at, l.ready_at}
           }
@@ -188,9 +284,16 @@ defmodule CookingSchedulerWeb.CookLive do
       ticks: ticks,
       now: pct.(now),
       serve: pct.(serve),
+      serves: for(at <- serves, do: %{at: at, left: pct.(at), label: course_label(at, serve)}),
       projected: pct.(projected)
     }
   end
+
+  # Prep that happens on the day: just before cooking, or ahead-of-time prep never ticked off.
+  defp prep_today?(d), do: d.prep_minutes > 0 and (d.prep_day == :before_cooking or not d.prepped)
+
+  defp course_label(at, serve) when at == serve, do: "serve"
+  defp course_label(at, serve), do: MealDish.course(at - serve) |> String.downcase()
 
   # Hobs group by size ("Medium rings"); everything else by its own name.
   defp group_key(nil), do: nil
@@ -252,6 +355,10 @@ defmodule CookingSchedulerWeb.CookLive do
   defp resource_name(%{resource: nil}), do: nil
   defp resource_name(%{resource: r}), do: r.name
 
+  defp verb(%{kind: :preheat, event: ev}),
+    do: "Switch on #{ev.appliance.name} to #{temp_text(ev.temp)}"
+
+  defp verb(%{kind: :adjust, event: ev}), do: "Turn #{ev.appliance.name} to #{temp_text(ev.temp)}"
   defp verb(%{kind: :prep, entry: e}), do: "Prep #{e.dish.name}"
 
   defp verb(%{kind: :start, entry: %{dish: %{method: :oven} = d} = e}),
@@ -271,6 +378,8 @@ defmodule CookingSchedulerWeb.CookLive do
 
   defp verb(%{kind: :out, entry: %{dish: d}}), do: "#{d.name} is done"
 
+  defp button_label(:preheat), do: "It's on"
+  defp button_label(:adjust), do: "Done"
   defp button_label(:prep), do: "Prepped"
   defp button_label(:start), do: "Started"
   defp button_label(:out), do: "Done"
@@ -325,6 +434,9 @@ defmodule CookingSchedulerWeb.CookLive do
       <div class="min-w-0 flex-1">
         <div class="font-semibold leading-snug">{verb(@task)}</div>
         <div class="mt-1 flex flex-wrap items-center gap-1">
+          <span :if={@task.event} class="badge badge-ghost badge-sm">
+            <.icon name="hero-fire-micro" class="size-3" /> for {@dish.name}
+          </span>
           <span
             :if={@task.kind == :start and temp_label(@dish)}
             class="badge badge-primary badge-soft badge-sm"
@@ -338,6 +450,7 @@ defmodule CookingSchedulerWeb.CookLive do
             +{@dish.extra_minutes}m added
           </span>
           <.link
+            :if={is_nil(@task.event)}
             id={"details-#{@dish.id}-#{@task.kind}"}
             navigate={~p"/meals/#{@dish.meal_id}/dishes/#{@dish.id}?from=cook"}
             class="badge badge-ghost badge-sm hover:badge-primary"
@@ -345,7 +458,7 @@ defmodule CookingSchedulerWeb.CookLive do
             <.icon name="hero-list-bullet-micro" class="size-3" /> Details
           </.link>
           <a
-            :if={@dish.link not in [nil, ""]}
+            :if={is_nil(@task.event) and @dish.link not in [nil, ""]}
             href={@dish.link}
             target="_blank"
             rel="noopener"
@@ -356,7 +469,7 @@ defmodule CookingSchedulerWeb.CookLive do
           </a>
         </div>
         <p
-          :if={@task.kind != :prep and @dish.notes not in [nil, ""]}
+          :if={@task.kind not in [:prep, :preheat, :adjust] and @dish.notes not in [nil, ""]}
           class="mt-1 line-clamp-1 text-xs text-base-content/60"
         >
           {@dish.notes}
@@ -371,6 +484,7 @@ defmodule CookingSchedulerWeb.CookLive do
         phx-click="complete"
         phx-value-dish={@dish.id}
         phx-value-kind={@task.kind}
+        phx-value-event={@task.event && @task.event.id}
       >
         <.icon name="hero-check" class="size-4" /> {button_label(@task.kind)}
       </button>
@@ -562,10 +676,15 @@ defmodule CookingSchedulerWeb.CookLive do
           <% end %>
 
           <span
-            id="overview-serve"
+            :for={c <- @overview.serves}
+            id={"overview-serve-#{c.at}"}
             class="pointer-events-none absolute bottom-0 top-0 w-0.5 bg-secondary"
-            style={"left: #{@overview.serve}%"}
-          ></span>
+            style={"left: #{c.left}%"}
+          >
+            <span class="absolute -top-0.5 left-1/2 -translate-x-1/2 rounded bg-secondary px-1 text-[10px] font-bold leading-4 text-secondary-content">
+              {c.label}
+            </span>
+          </span>
           <span
             id="overview-now"
             class="pointer-events-none absolute bottom-0 top-0 w-0.5 bg-error"
@@ -648,6 +767,115 @@ defmodule CookingSchedulerWeb.CookLive do
           </span>
         </div>
 
+        <div
+          id="cook-tools"
+          phx-hook=".CookTools"
+          phx-update="ignore"
+          class="flex items-center gap-1"
+        >
+          <button
+            type="button"
+            data-sound
+            aria-pressed="false"
+            class="btn btn-circle btn-xs border-0 bg-white/20 text-primary-content hover:bg-white/30 aria-pressed:bg-white aria-pressed:text-primary"
+            title="Chime and notify when something is due"
+            aria-label="Sound alerts"
+          >
+            <.icon name="hero-bell-micro" class="size-3.5" />
+          </button>
+          <button
+            type="button"
+            data-big
+            aria-pressed="false"
+            class="btn btn-circle btn-xs border-0 bg-white/20 text-primary-content hover:bg-white/30 aria-pressed:bg-white aria-pressed:text-primary"
+            title="Bigger type and buttons for the kitchen"
+            aria-label="Kitchen mode"
+          >
+            <.icon name="hero-magnifying-glass-plus-micro" class="size-3.5" />
+          </button>
+        </div>
+        <script :type={Phoenix.LiveView.ColocatedHook} name=".CookTools">
+          // Alerts, keep-awake and kitchen mode for the cook screen (ADR 0019). All state is
+          // per device, kept in localStorage; the server only says when something is due.
+          export default {
+            mounted() {
+              this.sound = this.el.querySelector("[data-sound]")
+              this.big = this.el.querySelector("[data-big]")
+              this.setSound(this.read("cook:sound") === "on", false)
+              this.setBig(this.read("cook:big") === "on")
+
+              this.sound.addEventListener("click", () => this.setSound(!this.on, true))
+              this.big.addEventListener("click", () => this.setBig(!this.isBig))
+
+              this.handleEvent("tasks_due", ({tasks}) => this.alert(tasks))
+
+              this.wake()
+              this.onVisible = () => document.visibilityState === "visible" && this.wake()
+              document.addEventListener("visibilitychange", this.onVisible)
+            },
+
+            destroyed() {
+              document.removeEventListener("visibilitychange", this.onVisible)
+              if(this.lock) this.lock.release().catch(() => {})
+              document.documentElement.classList.remove("kitchen-big")
+            },
+
+            read(key) { try { return localStorage.getItem(key) } catch(_e) { return null } },
+            write(key, value) { try { localStorage.setItem(key, value) } catch(_e) {} },
+
+            setSound(on, byUser) {
+              this.on = on
+              this.sound.setAttribute("aria-pressed", String(on))
+              this.write("cook:sound", on ? "on" : "off")
+              if(on && byUser){
+                this.chime()
+                if("Notification" in window && Notification.permission === "default") Notification.requestPermission()
+              }
+            },
+
+            setBig(on) {
+              this.isBig = on
+              this.big.setAttribute("aria-pressed", String(on))
+              this.write("cook:big", on ? "on" : "off")
+              document.documentElement.classList.toggle("kitchen-big", on)
+            },
+
+            async wake() {
+              if(!("wakeLock" in navigator)) return
+              try { this.lock = await navigator.wakeLock.request("screen") } catch(_e) {}
+            },
+
+            alert(tasks) {
+              if(!this.on) return
+              this.chime()
+              if("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible"){
+                new Notification(tasks[0], {body: tasks.slice(1).join("\n") || "Time to do it", tag: "cook"})
+              }
+            },
+
+            // Two short notes, no audio file needed.
+            chime() {
+              try {
+                const ctx = this.ctx || (this.ctx = new (window.AudioContext || window.webkitAudioContext)())
+                const play = (freq, at) => {
+                  const osc = ctx.createOscillator()
+                  const gain = ctx.createGain()
+                  osc.type = "sine"
+                  osc.frequency.value = freq
+                  gain.gain.setValueAtTime(0.0001, at)
+                  gain.gain.exponentialRampToValueAtTime(0.3, at + 0.02)
+                  gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.35)
+                  osc.connect(gain).connect(ctx.destination)
+                  osc.start(at)
+                  osc.stop(at + 0.4)
+                }
+                play(880, ctx.currentTime)
+                play(1175, ctx.currentTime + 0.25)
+              } catch(_e) {}
+            }
+          }
+        </script>
+
         <div id="status" class="flex flex-wrap items-center gap-2">
           <div
             :if={@behind <= 0}
@@ -669,6 +897,34 @@ defmodule CookingSchedulerWeb.CookLive do
           >
             Move dinner to {Duration.clock(@projected)}
           </button>
+        </div>
+      </div>
+
+      <div :if={@ovens != []} id="oven-strip" class="mt-3 flex flex-wrap gap-2">
+        <div
+          :for={o <- @ovens}
+          id={"oven-now-#{o.appliance.id}"}
+          class={[
+            "flex items-center gap-2 rounded-full border px-3 py-1 text-sm",
+            (o.dishes != [] && "border-primary/40 bg-primary/10") || "border-base-300 bg-base-100/80"
+          ]}
+        >
+          <.icon
+            name={group_icon(o.appliance)}
+            class={["size-4", (o.dishes != [] or o.preheating) && "text-primary"]}
+          />
+          <span class="font-semibold">{o.appliance.name}</span>
+          <span :if={o.setting} class="text-xs text-base-content/70">{o.setting}</span>
+          <span class="text-xs text-base-content/60">
+            <%= cond do %>
+              <% o.dishes != [] -> %>
+                {Enum.join(o.dishes, ", ")}
+              <% o.preheating -> %>
+                heating up
+              <% true -> %>
+                free
+            <% end %>
+          </span>
         </div>
       </div>
 
@@ -709,8 +965,22 @@ defmodule CookingSchedulerWeb.CookLive do
               <p class="mt-1 text-base-content/60">Time to serve. Merry Christmas!</p>
             </div>
             <ul :if={@pending != []} id="tasks" class="space-y-3">
-              <.task_card :for={t <- @pending} task={t} now={@now} />
+              <.task_card :for={t <- @soon} task={t} now={@now} />
             </ul>
+            <div :if={@later != []} class="mt-3">
+              <button
+                id="later-toggle"
+                type="button"
+                class="flex w-full items-center justify-between rounded-xl px-1 py-1 text-sm font-semibold text-base-content/60 hover:text-primary"
+                phx-click={JS.toggle(to: "#later")}
+              >
+                <span>Later ({length(@later)}) · next at {Duration.clock(hd(@later).at)}</span>
+                <.icon name="hero-chevron-down-micro" class="size-4" />
+              </button>
+              <ul id="later" style="display: none" class="mt-2 space-y-3">
+                <.task_card :for={t <- @later} task={t} now={@now} />
+              </ul>
+            </div>
           </section>
 
           <section :if={@resting != []}>
@@ -752,12 +1022,20 @@ defmodule CookingSchedulerWeb.CookLive do
                   phx-click="undo"
                   phx-value-dish={t.entry.dish.id}
                   phx-value-kind={t.kind}
+                  phx-value-event={t.event && t.event.id}
                 >undo</button>
               </li>
             </ul>
           </section>
 
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
+            <.link
+              id="run-sheet"
+              navigate={~p"/meals/#{@meal.id}/sheet"}
+              class="btn btn-xs rounded-full"
+            >
+              <.icon name="hero-printer-micro" class="size-3.5" /> Run sheet
+            </.link>
             <.confirm_button
               id="finish-cooking"
               title="Finish cooking now?"

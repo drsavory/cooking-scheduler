@@ -43,6 +43,7 @@ defmodule CookingSchedulerWeb.Router do
       live "/meals/:id/prep", PrepLive
       live "/meals/:id/shopping", ShoppingLive
       live "/meals/:id/cook", CookLive
+      live "/meals/:id/sheet", SheetLive
       live "/meals/:id/summary", SummaryLive
     end
   end
