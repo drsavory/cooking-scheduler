@@ -36,8 +36,11 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       assert_reply(lv, %{meals: [%{id: id}]})
       assert id == meal.id
 
+      render_hook(lv, "spotlight_search", %{"q" => "home"})
+      assert_reply(lv, %{pages: [%{id: "home", href: "/"}], meals: [], dishes: []})
+
       render_hook(lv, "spotlight_search", %{"q" => "zzz-no-match"})
-      assert_reply(lv, %{meals: [], dishes: []})
+      assert_reply(lv, %{pages: [], meals: [], dishes: []})
     end
 
     test "spotlight is available on other pages", %{conn: conn} do

@@ -59,7 +59,7 @@ defmodule CookingSchedulerWeb.Layouts do
               id="open-search"
               type="button"
               phx-click={JS.dispatch("search:open", to: "#spotlight")}
-              aria-label="Search meals and dishes"
+              aria-label="Search pages, meals and dishes"
               class="btn btn-ghost btn-sm rounded-full"
             >
               <.icon name="hero-magnifying-glass" class="size-4" />
@@ -104,7 +104,7 @@ defmodule CookingSchedulerWeb.Layouts do
       phx-update="ignore"
       role="dialog"
       aria-modal="true"
-      aria-label="Search meals and dishes"
+      aria-label="Search pages, meals and dishes"
       data-meal-base="/meals"
       data-dish-base="/dishes"
       class="fixed inset-0 z-[90] hidden items-start justify-center p-4 pt-[12vh]"
@@ -118,7 +118,7 @@ defmodule CookingSchedulerWeb.Layouts do
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="Search meals and dishes…"
+            placeholder="Search pages, meals and dishes…"
             class="h-14 w-full border-0 bg-transparent text-lg outline-none focus:outline-none focus:ring-0"
           />
           <kbd class="kbd kbd-sm">esc</kbd>
@@ -184,10 +184,10 @@ defmodule CookingSchedulerWeb.Layouts do
             })
           },
 
-          show({meals = [], dishes = []}){
+          show({pages = [], meals = [], dishes = []}){
             this.results.replaceChildren()
             const base = {meal: this.el.dataset.mealBase, dish: this.el.dataset.dishBase}
-            const href = i => i.kind === "meal" ? `${base.meal}/${i.id}/plan` : `${base.dish}/${i.id}`
+            const href = i => i.href || (i.kind === "meal" ? `${base.meal}/${i.id}/plan` : `${base.dish}/${i.id}`)
             const group = (title, items) => {
               if(items.length === 0) return
               const h = document.createElement("h3")
@@ -196,9 +196,10 @@ defmodule CookingSchedulerWeb.Layouts do
               this.results.append(h)
               items.forEach(i => this.results.append(this.row(i, href(i))))
             }
+            group("Pages", pages)
             group("Meals", meals)
             group("Dishes", dishes)
-            if(meals.length + dishes.length === 0){
+            if(pages.length + meals.length + dishes.length === 0){
               const p = document.createElement("p")
               p.className = "px-3 py-8 text-center text-base-content/60"
               p.textContent = "Nothing matches."

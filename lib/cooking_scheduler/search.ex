@@ -1,16 +1,30 @@
 defmodule CookingScheduler.Search do
-  @moduledoc "Quick search across meals and dishes, used by the spotlight dialog."
+  @moduledoc "Quick search across pages, meals and dishes, used by the spotlight dialog."
 
   alias CookingScheduler.Meals
 
   @limit 8
 
+  @pages [
+    %{
+      kind: "page",
+      id: "home",
+      label: "Home",
+      sub: "Meals and dishes",
+      icon: "hero-home",
+      href: "/"
+    }
+  ]
+
   @doc """
-  Returns `%{meals: [...], dishes: [...]}` of display maps (`id`, `label`, `sub`, `icon`,
-  `kind`) matching every whitespace-separated term in `query`. Dishes also match on tags.
+  Returns `%{pages: [...], meals: [...], dishes: [...]}` of display maps (`id`, `label`, `sub`,
+  `icon`, `kind`) matching every whitespace-separated term in `query`. Dishes also match on
+  tags; pages carry their own `href`.
   """
   def search(query) do
     terms = query |> to_string() |> String.downcase() |> String.split(~r/\s+/, trim: true)
+
+    pages = Enum.filter(@pages, &matches?([&1.label], terms))
 
     meals =
       Meals.list_meals()
@@ -40,7 +54,7 @@ defmodule CookingScheduler.Search do
         }
       end)
 
-    %{meals: meals, dishes: dishes}
+    %{pages: pages, meals: meals, dishes: dishes}
   end
 
   defp matches?(fields, terms) do
