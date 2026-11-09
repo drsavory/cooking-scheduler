@@ -67,4 +67,44 @@ defmodule CookingSchedulerWeb.DishFormLiveTest do
 
     assert [%{tags: ["sauce", "main", "festive"]}] = Meals.list_dishes()
   end
+
+  test "import fills the form from a recipe link and adds its ingredients on save", %{conn: conn} do
+    page =
+      ~s(<script type="application/ld+json">{"@type":"Recipe","name":"Nut roast","prepTime":"PT20M","cookTime":"PT1H","recipeIngredient":["200 g mixed nuts","1 onion"]}</script>)
+
+    Application.put_env(:cooking_scheduler, :recipe_import_req,
+      plug: fn conn -> Plug.Conn.send_resp(conn, 200, page) end
+    )
+
+    on_exit(fn -> Application.delete_env(:cooking_scheduler, :recipe_import_req) end)
+
+    {:ok, lv, _} = live(conn, ~p"/dishes/new")
+
+    lv
+    |> form("#dish-form", dish: %{link: "https://example.com/nut-roast", temp: "6"})
+    |> render_change()
+
+    lv |> element("#import-recipe") |> render_click()
+    html = render_async(lv)
+
+    assert html =~ "Nut roast"
+    assert has_element?(lv, "#imported-ingredients", "2 ingredients")
+
+    lv |> form("#dish-form", dish: %{temp: "6"}) |> render_submit()
+    [dish] = Meals.list_dishes()
+    assert %{name: "Nut roast", prep_minutes: 20, cook_minutes: 60} = dish
+    assert length(Meals.list_dish_ingredients(dish)) == 2
+  end
+
+  test "course and prep timing can be chosen for a new dish", %{conn: conn} do
+    {:ok, lv, _} = live(conn, ~p"/dishes/new")
+
+    lv
+    |> form("#dish-form",
+      dish: %{name: "Trifle", temp: "4", serve_offset_minutes: "60", prep_day: "day_before"}
+    )
+    |> render_submit()
+
+    assert [%{serve_offset_minutes: 60, prep_day: :day_before}] = Meals.list_dishes()
+  end
 end

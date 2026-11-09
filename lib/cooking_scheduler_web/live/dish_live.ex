@@ -6,7 +6,7 @@ defmodule CookingSchedulerWeb.DishLive do
   """
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Duration, Kitchen, Meals, Photos, RecipeLink}
+  alias CookingScheduler.{Dates, Duration, Kitchen, Meals, Photos, RecipeImport, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
   alias CookingScheduler.Meals.{MealDish, DishIngredient, Dish}
 
@@ -40,7 +40,9 @@ defmodule CookingSchedulerWeb.DishLive do
     |> assign(:meal_name, meal_name)
     |> assign(:error, nil)
     |> assign(:editing, false)
+    |> assign(:importing, false)
     |> assign(:photos, Photos.list_for(dish))
+    |> assign(:history, if(match?(%Dish{}, dish), do: Meals.dish_history(dish), else: []))
     |> assign_dish(dish)
     |> load_ingredients()
   end
@@ -66,6 +68,7 @@ defmodule CookingSchedulerWeb.DishLive do
     |> assign(:ingredients, Meals.list_dish_ingredients(socket.assigns.dish))
     |> assign(:known, Meals.list_ingredients())
     |> assign(:form, to_form(%{"name" => "", "amount" => "", "unit" => ""}, as: :ingredient))
+    |> assign(:paste_form, to_form(%{"text" => ""}, as: :paste))
   end
 
   @impl true
@@ -129,7 +132,111 @@ defmodule CookingSchedulerWeb.DishLive do
     end
   end
 
+  # A whole list at once (ADR 0023): one ingredient per line.
+  def handle_event("paste_ingredients", %{"paste" => %{"text" => text}}, socket) do
+    %{added: added, skipped: skipped} = Meals.add_ingredients_from_text(socket.assigns.dish, text)
+
+    socket =
+      socket
+      |> load_ingredients()
+      |> assign(
+        :error,
+        if(skipped == [], do: nil, else: "Couldn't read: " <> Enum.join(skipped, "; "))
+      )
+
+    socket =
+      if added == [],
+        do: socket,
+        else:
+          put_flash(
+            socket,
+            :info,
+            "Added #{length(added)} #{if length(added) == 1, do: "ingredient", else: "ingredients"}"
+          )
+
+    {:noreply, socket}
+  end
+
+  def handle_event("file_ingredient", %{"ingredient_id" => id, "ingredient" => attrs}, socket) do
+    case Enum.find(socket.assigns.ingredients, &(Integer.to_string(&1.ingredient.id) == id)) do
+      nil ->
+        {:noreply, socket}
+
+      di ->
+        {:ok, _} = Meals.update_ingredient(di.ingredient, attrs)
+        {:noreply, load_ingredients(socket)}
+    end
+  end
+
+  # Pulls ingredients (and times, where the dish has none) from the recipe link (ADR 0023).
+  def handle_event("import_recipe", _params, socket) do
+    link = socket.assigns.dish.link
+
+    {:noreply,
+     socket
+     |> assign(:importing, true)
+     |> start_async(:import, fn -> RecipeImport.fetch(link) end)}
+  end
+
+  @impl true
+  def handle_async(:import, {:ok, {:ok, recipe}}, socket) do
+    dish = socket.assigns.dish
+    %{added: added} = Meals.add_ingredients_from_text(dish, Enum.join(recipe.ingredients, "\n"))
+
+    times =
+      for {field, value} <- [prep_minutes: recipe.prep_minutes, cook_minutes: recipe.cook_minutes],
+          value,
+          Map.fetch!(dish, field) == 0,
+          into: %{},
+          do: {field, value}
+
+    if times != %{}, do: {:ok, _} = update_meal_dish(dish, times)
+
+    summary =
+      ["#{length(added)} ingredients"] ++
+        if(times == %{}, do: [], else: ["times from the recipe"])
+
+    {:noreply,
+     socket
+     |> assign(:importing, false)
+     |> assign_dish(reload(dish))
+     |> load_ingredients()
+     |> put_flash(
+       :info,
+       "Imported " <> Enum.join(summary, " and ") <> " from #{RecipeLink.host(dish.link)}"
+     )}
+  end
+
+  def handle_async(:import, {:ok, {:error, reason}}, socket) do
+    message =
+      case reason do
+        :no_recipe -> "That page doesn't have a recipe we can read."
+        :bad_link -> "That doesn't look like a web address."
+        _ -> "Couldn't reach that page."
+      end
+
+    {:noreply, socket |> assign(:importing, false) |> put_flash(:error, message)}
+  end
+
+  def handle_async(:import, {:exit, _}, socket),
+    do:
+      {:noreply,
+       socket |> assign(:importing, false) |> put_flash(:error, "Couldn't read that page.")}
+
   # ---- display helpers ------------------------------------------------------
+
+  defp lateness_label(nil), do: "not finished"
+  defp lateness_label(0), do: "on time"
+  defp lateness_label(m) when m > 0, do: "#{Duration.format(m)} late"
+  defp lateness_label(m), do: "#{Duration.format(-m)} early"
+
+  defp serve_options(current) do
+    presets = MealDish.serve_offset_options()
+
+    if current in [nil | Enum.map(presets, &elem(&1, 1))],
+      do: presets,
+      else: presets ++ [{"Custom · #{current}m", current}]
+  end
 
   defp method_label(:oven), do: "Oven"
   defp method_label(:ring), do: "Hob"
@@ -363,6 +470,22 @@ defmodule CookingSchedulerWeb.DishLive do
                   placeholder="0m"
                   phx-debounce="400"
                 />
+                <.box
+                  locked={not @editing}
+                  f={@dish_form[:serve_offset_minutes]}
+                  label="Course"
+                  type="select"
+                  class="col-span-2"
+                  options={serve_options(@dish.serve_offset_minutes)}
+                />
+                <.box
+                  locked={not @editing}
+                  f={@dish_form[:prep_day]}
+                  label="Prep when"
+                  type="select"
+                  class="col-span-2"
+                  options={MealDish.prep_day_options()}
+                />
               </div>
 
               <div class="mt-2 grid gap-2 sm:grid-cols-2">
@@ -382,27 +505,103 @@ defmodule CookingSchedulerWeb.DishLive do
                     placeholder="https://…"
                     phx-debounce="400"
                   />
-                  <a
-                    :if={@dish.link not in [nil, ""]}
-                    id="dish-link"
-                    href={@dish.link}
-                    target="_blank"
-                    rel="noopener"
-                    class="link link-hover mt-2 inline-flex items-center gap-1 text-sm text-primary"
-                  >
-                    <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Open recipe
-                    <span
-                      :if={RecipeLink.host(@dish.link)}
-                      id="dish-link-host"
-                      class="text-base-content/60"
+                  <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <a
+                      :if={@dish.link not in [nil, ""]}
+                      id="dish-link"
+                      href={@dish.link}
+                      target="_blank"
+                      rel="noopener"
+                      class="link link-hover inline-flex items-center gap-1 text-sm text-primary"
                     >
-                      on {RecipeLink.host(@dish.link)}
-                    </span>
-                  </a>
+                      <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Open recipe
+                      <span
+                        :if={RecipeLink.host(@dish.link)}
+                        id="dish-link-host"
+                        class="text-base-content/60"
+                      >
+                        on {RecipeLink.host(@dish.link)}
+                      </span>
+                    </a>
+                    <button
+                      :if={not @editing and RecipeLink.host(@dish.link)}
+                      type="button"
+                      id="import-recipe"
+                      phx-click="import_recipe"
+                      disabled={@importing}
+                      class="btn btn-xs btn-primary btn-soft rounded-full"
+                    >
+                      <.icon
+                        name={
+                          if @importing,
+                            do: "hero-arrow-path-micro",
+                            else: "hero-arrow-down-tray-micro"
+                        }
+                        class={["size-3.5", @importing && "motion-safe:animate-spin"]}
+                      />
+                      {if @importing, do: "Reading the recipe…", else: "Import ingredients & times"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>
           </.form>
+
+          <section
+            :if={meal_dish?(@dish) and @dish.next_time not in [nil, ""]}
+            id="dish-next-time"
+            class="mt-6"
+          >
+            <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-base-content/60">
+              Next time
+            </h2>
+            <p class="whitespace-pre-line rounded-xl bg-accent/15 px-3 py-2 text-sm">
+              {@dish.next_time}
+            </p>
+          </section>
+
+          <section :if={not meal_dish?(@dish) and @history != []} id="dish-history" class="mt-6">
+            <h2 class="mb-2 flex items-center gap-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
+              How it went
+              <span class="rounded-full bg-base-content/10 px-2 py-0.5 text-xs">{length(@history)}</span>
+            </h2>
+            <ul class="grid gap-2">
+              <li
+                :for={h <- @history}
+                id={"history-#{h.meal_dish.id}"}
+                class="glass rounded-xl px-3 py-2 text-sm"
+              >
+                <div class="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <.link
+                    navigate={~p"/meals/#{h.meal.id}/summary"}
+                    class="font-semibold hover:text-primary"
+                  >
+                    {h.meal.name}
+                  </.link>
+                  <span class="text-xs text-base-content/60">
+                    {Calendar.strftime(h.meal.date, "%d %b %Y")} · {Dates.relative(h.meal.date)}
+                  </span>
+                </div>
+                <div class="mt-0.5 flex flex-wrap gap-x-3 text-xs text-base-content/70">
+                  <span>Planned {Duration.format(h.meal_dish.cook_minutes)}, took {Duration.format(
+                    Meals.actual_cook(h.meal_dish)
+                  )}</span>
+                  <span class={[
+                    h.lateness && h.lateness > 0 && "text-warning font-semibold",
+                    h.lateness == 0 && "text-success"
+                  ]}>
+                    {lateness_label(h.lateness)}
+                  </span>
+                </div>
+                <p
+                  :if={h.meal_dish.next_time not in [nil, ""]}
+                  class="mt-1 whitespace-pre-line rounded-lg bg-accent/15 px-2 py-1 text-xs"
+                >
+                  {h.meal_dish.next_time}
+                </p>
+              </li>
+            </ul>
+          </section>
 
           <section id="ingredients" class="mt-6">
             <h2 class="mb-3 flex items-center gap-3 text-sm font-semibold uppercase tracking-wider text-base-content/60">
@@ -416,26 +615,38 @@ defmodule CookingSchedulerWeb.DishLive do
               <li
                 :for={di <- @ingredients}
                 id={"ingredient-#{di.id}"}
-                class="glass group flex items-center gap-2 rounded-xl px-3 py-1"
+                class="glass group rounded-xl px-3 py-1"
               >
-                <span class="min-w-0 flex-1 truncate font-medium">{di.ingredient.name}</span>
-                <span
-                  :if={DishIngredient.format(di)}
-                  id={"ingredient-amount-#{di.id}"}
-                  class="text-sm tabular-nums text-base-content/60"
-                >
-                  {DishIngredient.format(di)}
-                </span>
-                <button
-                  type="button"
-                  id={"remove-ingredient-#{di.id}"}
-                  class="btn btn-xs btn-circle btn-ghost hover:text-error"
-                  phx-click="remove_ingredient"
-                  phx-value-id={di.id}
-                  aria-label={"Remove #{di.ingredient.name}"}
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </button>
+                <div class="flex items-center gap-2">
+                  <span class="min-w-0 flex-1 truncate font-medium">
+                    {di.ingredient.name}
+                    <span
+                      :if={di.ingredient.staple}
+                      class="ml-1 text-xs font-normal text-base-content/50"
+                    >
+                      cupboard
+                    </span>
+                  </span>
+                  <span
+                    :if={DishIngredient.format(di)}
+                    id={"ingredient-amount-#{di.id}"}
+                    class="text-sm tabular-nums text-base-content/60"
+                  >
+                    {DishIngredient.format(di)}
+                  </span>
+                  <.ingredient_filing ingredient={di.ingredient} id={"file-#{di.ingredient.id}"} />
+                  <button
+                    type="button"
+                    id={"remove-ingredient-#{di.id}"}
+                    class="btn btn-xs btn-circle btn-ghost hover:text-error"
+                    phx-click="remove_ingredient"
+                    phx-value-id={di.id}
+                    aria-label={"Remove #{di.ingredient.name}"}
+                  >
+                    <.icon name="hero-x-mark" class="size-4" />
+                  </button>
+                </div>
+                <.ingredient_filing_form ingredient={di.ingredient} id={"file-#{di.ingredient.id}"} />
               </li>
             </ul>
 
@@ -486,6 +697,25 @@ defmodule CookingSchedulerWeb.DishLive do
               </button>
             </.form>
             <p :if={@error} id="ingredient-error" class="mt-1 text-sm text-error">{@error}</p>
+
+            <details id="paste-ingredients" class="mt-4 group">
+              <summary class="cursor-pointer text-sm text-base-content/60 hover:text-primary">
+                <.icon name="hero-clipboard-document-micro" class="inline size-4" />
+                Paste a list instead
+              </summary>
+              <.form for={@paste_form} id="paste-form" phx-submit="paste_ingredients" class="mt-2">
+                <.input
+                  field={@paste_form[:text]}
+                  type="textarea"
+                  rows="5"
+                  placeholder="One per line, as a recipe writes it:\n200 g butter\n2 onions, chopped\n1 tbsp olive oil"
+                  aria-label="Ingredient list"
+                />
+                <button id="paste-add" class="btn btn-sm btn-primary btn-soft rounded-full">
+                  <.icon name="hero-plus-micro" class="size-4" /> Add them all
+                </button>
+              </.form>
+            </details>
           </section>
         </div>
 

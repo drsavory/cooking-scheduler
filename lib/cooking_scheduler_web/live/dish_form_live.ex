@@ -10,9 +10,9 @@ defmodule CookingSchedulerWeb.DishFormLive do
   """
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Duration, Meals}
+  alias CookingScheduler.{Duration, Meals, RecipeImport, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
-  alias CookingScheduler.Meals.Dish
+  alias CookingScheduler.Meals.{Dish, MealDish}
 
   @impl true
   def mount(_params, session, socket) do
@@ -29,19 +29,29 @@ defmodule CookingSchedulerWeb.DishFormLive do
      |> assign(:page_title, "New dish")
      |> assign(:meal, meal)
      |> assign(:dish, dish)
+     |> assign(:params, %{})
+     |> assign(:importing, false)
+     |> assign(:imported, [])
      |> assign(:form, to_form(Meals.change_dish(dish)))}
   end
 
   @impl true
   def handle_event("validate", %{"dish" => params}, socket) do
     form = socket.assigns.dish |> Meals.change_dish(params) |> to_form(action: :validate)
-    {:noreply, assign(socket, :form, form)}
+    {:noreply, socket |> assign(:params, params) |> assign(:form, form)}
   end
 
   def handle_event("save", %{"dish" => params}, socket) do
     case Meals.create_dish(params) do
-      {:ok, dish} -> {:noreply, after_save(socket, dish)}
-      {:error, changeset} -> {:noreply, assign(socket, :form, to_form(changeset))}
+      {:ok, dish} ->
+        # Ingredients that came with an imported recipe (ADR 0023).
+        if socket.assigns.imported != [],
+          do: Meals.add_ingredients_from_text(dish, Enum.join(socket.assigns.imported, "\n"))
+
+        {:noreply, after_save(socket, dish)}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :form, to_form(changeset))}
     end
   end
 
@@ -49,6 +59,64 @@ defmodule CookingSchedulerWeb.DishFormLive do
     if socket.parent_pid, do: send(socket.parent_pid, :close_add_dish)
     {:noreply, socket}
   end
+
+  # Fill the form from the recipe at the link typed so far.
+  def handle_event("import_recipe", _params, socket) do
+    link = socket.assigns.params["link"] || ""
+
+    if RecipeLink.host(link) do
+      {:noreply,
+       socket
+       |> assign(:importing, true)
+       |> start_async(:import, fn -> RecipeImport.fetch(link) end)}
+    else
+      {:noreply, put_flash(socket, :error, "Paste a recipe's web address first.")}
+    end
+  end
+
+  @impl true
+  def handle_async(:import, {:ok, {:ok, recipe}}, socket) do
+    filled =
+      [
+        {"name", recipe.name},
+        {"prep_minutes", recipe.prep_minutes && Integer.to_string(recipe.prep_minutes)},
+        {"cook_minutes", recipe.cook_minutes && Integer.to_string(recipe.cook_minutes)},
+        {"link", recipe.link}
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+      |> Map.new()
+
+    # Imported values fill blanks; anything already typed stays.
+    params =
+      Map.merge(filled, socket.assigns.params, fn _k, imported, typed ->
+        if typed in [nil, "", "0", "0m"], do: imported, else: typed
+      end)
+
+    form = socket.assigns.dish |> Meals.change_dish(params) |> to_form(action: :validate)
+
+    {:noreply,
+     socket
+     |> assign(:importing, false)
+     |> assign(:imported, recipe.ingredients)
+     |> assign(:params, params)
+     |> assign(:form, form)}
+  end
+
+  def handle_async(:import, {:ok, {:error, reason}}, socket) do
+    message =
+      case reason do
+        :no_recipe -> "That page doesn't have a recipe we can read."
+        :bad_link -> "That doesn't look like a web address."
+        _ -> "Couldn't reach that page."
+      end
+
+    {:noreply, socket |> assign(:importing, false) |> put_flash(:error, message)}
+  end
+
+  def handle_async(:import, {:exit, _}, socket),
+    do:
+      {:noreply,
+       socket |> assign(:importing, false) |> put_flash(:error, "Couldn't read that page.")}
 
   defp after_save(%{assigns: %{meal: nil}} = socket, dish),
     do: push_navigate(socket, to: ~p"/dishes/#{dish.id}")
@@ -84,6 +152,8 @@ defmodule CookingSchedulerWeb.DishFormLive do
 
   attr :form, :any, required: true
   attr :embedded, :boolean, required: true
+  attr :importing, :boolean, default: false
+  attr :imported, :list, default: []
 
   defp dish_form(assigns) do
     ~H"""
@@ -153,14 +223,55 @@ defmodule CookingSchedulerWeb.DishFormLive do
         <.duration field={@form[:rest_minutes]} label="Rest" />
       </div>
 
+      <div class="grid gap-x-4 sm:grid-cols-2">
+        <.input
+          field={@form[:serve_offset_minutes]}
+          type="select"
+          label="Course"
+          options={MealDish.serve_offset_options()}
+        />
+        <.input
+          field={@form[:prep_day]}
+          type="select"
+          label="Prep when"
+          options={MealDish.prep_day_options()}
+        />
+      </div>
+
       <.input field={@form[:notes]} type="textarea" rows="2" label="Notes" phx-debounce="400" />
-      <.input
-        field={@form[:link]}
-        type="text"
-        label="Recipe link"
-        placeholder="https://…"
-        phx-debounce="400"
-      />
+      <div class="flex items-end gap-2">
+        <div class="min-w-0 flex-1">
+          <.input
+            field={@form[:link]}
+            type="text"
+            label="Recipe link"
+            placeholder="https://…"
+            phx-debounce="400"
+          />
+        </div>
+        <button
+          type="button"
+          id="import-recipe"
+          phx-click="import_recipe"
+          disabled={@importing}
+          title="Fill in the name, times and ingredients from the recipe page"
+          class="btn btn-soft btn-primary mb-4 rounded-full"
+        >
+          <.icon
+            name={if @importing, do: "hero-arrow-path-micro", else: "hero-arrow-down-tray-micro"}
+            class={["size-4", @importing && "motion-safe:animate-spin"]}
+          />
+          {if @importing, do: "Reading…", else: "Import"}
+        </button>
+      </div>
+      <p
+        :if={@imported != []}
+        id="imported-ingredients"
+        class="-mt-2 mb-4 text-sm text-base-content/60"
+      >
+        <.icon name="hero-check-circle-micro" class="inline size-4 text-success" />
+        {length(@imported)} ingredients will be added when you save.
+      </p>
 
       <div class="mt-2 flex justify-end gap-2">
         <button
@@ -185,7 +296,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
   @impl true
   def render(%{meal: %Meals.Meal{}} = assigns) do
     ~H"""
-    <.dish_form form={@form} embedded={true} />
+    <.dish_form form={@form} embedded={true} importing={@importing} imported={@imported} />
     """
   end
 
@@ -203,7 +314,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
         A dish idea you can drop into any future meal. Each meal gets its own copy.
       </p>
 
-      <.dish_form form={@form} embedded={false} />
+      <.dish_form form={@form} embedded={false} importing={@importing} imported={@imported} />
     </Layouts.app>
     """
   end

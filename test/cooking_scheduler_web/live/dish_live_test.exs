@@ -337,4 +337,97 @@ defmodule CookingSchedulerWeb.DishLiveTest do
       assert has_element?(lv, "#dish-photo-#{photo.id} img")
     end
   end
+
+  describe "faster entry" do
+    test "a pasted list becomes ingredients, with unreadable lines reported", %{
+      conn: conn,
+      meal: meal,
+      dish: dish
+    } do
+      {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/dishes/#{dish.id}")
+
+      lv
+      |> form("#paste-form",
+        paste: %{
+          text: "2.5 kg Maris Piper potatoes\n3 tbsp goose fat\n- 1 bulb of garlic\nsea salt\n"
+        }
+      )
+      |> render_submit()
+
+      names =
+        Meals.list_dish_ingredients(dish) |> Enum.map(&{&1.ingredient.name, &1.amount, &1.unit})
+
+      assert {"Maris Piper potatoes", 2.5, :kg} in names
+      assert {"goose fat", 3.0, :tbsp} in names
+      assert {"bulb of garlic", 1.0, nil} in names
+      assert {"sea salt", nil, nil} in names
+      refute has_element?(lv, "#ingredient-error")
+    end
+
+    test "imports ingredients and missing times from the recipe link", %{conn: conn, meal: meal} do
+      page =
+        ~s(<script type="application/ld+json">{"@type":"Recipe","name":"Pigs","prepTime":"PT10M","cookTime":"PT35M","recipeIngredient":["12 chipolatas","6 rashers streaky bacon"]}</script>)
+
+      Application.put_env(:cooking_scheduler, :recipe_import_req,
+        plug: fn conn -> Plug.Conn.send_resp(conn, 200, page) end
+      )
+
+      on_exit(fn -> Application.delete_env(:cooking_scheduler, :recipe_import_req) end)
+
+      {:ok, dish} =
+        Meals.create_meal_dish(
+          meal,
+          attrs(%{name: "Pigs in blankets", link: "https://example.com/pigs", cook_minutes: 40})
+        )
+
+      {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/dishes/#{dish.id}")
+      lv |> element("#import-recipe") |> render_click()
+      render_async(lv)
+
+      assert Meals.list_dish_ingredients(dish) |> length() == 2
+      updated = Meals.get_meal_dish!(dish.id)
+      # prep was blank so it came from the recipe; cook time already set, so it stayed
+      assert updated.prep_minutes == 10
+      assert updated.cook_minutes == 40
+      assert render(lv) =~ "Imported 2 ingredients"
+    end
+  end
+
+  test "ingredients can be filed from the dish page", %{conn: conn, meal: meal, dish: dish} do
+    {:ok, di} = Meals.add_ingredient(dish, "Salt")
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/dishes/#{dish.id}")
+
+    lv
+    |> form("#file-#{di.ingredient_id}", ingredient: %{category: "cupboard", staple: "true"})
+    |> render_change()
+
+    assert %{staple: true, category: :cupboard} = Meals.get_ingredient!(di.ingredient_id)
+    assert has_element?(lv, "#ingredient-#{di.id}", "cupboard")
+  end
+
+  test "course and prep timing are edited with the rest", %{conn: conn, meal: meal, dish: dish} do
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/dishes/#{dish.id}")
+    lv |> element("#edit-dish") |> render_click()
+
+    lv
+    |> form("#dish-form", dish: %{serve_offset_minutes: "60", prep_day: "morning_of"})
+    |> render_submit()
+
+    assert %{serve_offset_minutes: 60, prep_day: :morning_of} = Meals.get_meal_dish!(dish.id)
+  end
+
+  test "a library dish shows how it went in finished meals", %{conn: conn, meal: meal, dish: dish} do
+    {:ok, _} = Meals.start_cooking(dish, 600)
+    {:ok, _} = Meals.finish_cooking(Meals.get_meal_dish!(dish.id), 680)
+
+    {:ok, _} =
+      Meals.update_meal_dish(Meals.get_meal_dish!(dish.id), %{next_time: "Parboil longer"})
+
+    {:ok, _} = Meals.finish_meal(Meals.get_meal!(meal.id))
+
+    library = Meals.get_meal_dish!(dish.id).dish_id
+    {:ok, lv, _} = live(conn, ~p"/dishes/#{library}")
+    assert has_element?(lv, "#dish-history #history-#{dish.id}", "took 1h 20m")
+    assert has_element?(lv, "#dish-history #history-#{dish.id}", "Parboil longer")
+  end
 end
