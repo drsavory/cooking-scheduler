@@ -2,8 +2,8 @@ defmodule CookingSchedulerWeb.PrepLive do
   @moduledoc "Everything to do before the cooking day: get the ingredients in, then prep ahead."
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Duration, Kitchen, Meals, Planner}
-  alias CookingScheduler.Meals.{DishIngredient, Meal}
+  alias CookingScheduler.{Dates, Duration, Kitchen, Meals, Planner}
+  alias CookingScheduler.Meals.{DishIngredient, Meal, MealDish}
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -27,10 +27,15 @@ defmodule CookingSchedulerWeb.PrepLive do
     shopping = Meals.shopping_list(meal)
 
     socket
-    |> assign(:shopping, shopping)
+    |> assign(:shopping, Enum.reject(shopping, & &1.ingredient.staple))
     |> assign(
       :bought,
-      for(row <- shopping, row.bought?, into: MapSet.new(), do: row.ingredient.id)
+      for(
+        row <- shopping,
+        row.bought? or row.ingredient.staple,
+        into: MapSet.new(),
+        do: row.ingredient.id
+      )
     )
     |> assign(:page_title, "Prep · #{meal.name}")
     |> assign(:meal, meal)
@@ -62,6 +67,24 @@ defmodule CookingSchedulerWeb.PrepLive do
   end
 
   defp prep_entries(entries), do: Enum.filter(entries, &(&1.dish.prep_minutes > 0))
+
+  # Prep-ahead dishes grouped by when they're meant to be done (ADR 0022), soonest-needed first.
+  defp prep_groups(entries) do
+    labels = %{
+      day_before: {"The day before", "Get these done ahead."},
+      morning_of: {"The morning of", "First thing on the day."},
+      before_cooking:
+        {"Just before cooking",
+         "These are on the cook screen too; tick them here if you get ahead."}
+    }
+
+    for day <- MealDish.prep_days(),
+        rows = Enum.filter(prep_entries(entries), &(&1.dish.prep_day == day)),
+        rows != [] do
+      {title, hint} = labels[day]
+      %{day: day, title: title, hint: hint, entries: rows}
+    end
+  end
 
   defp progress(entries) do
     prep = prep_entries(entries)
@@ -108,7 +131,14 @@ defmodule CookingSchedulerWeb.PrepLive do
   @impl true
   def render(assigns) do
     {done, total} = progress(assigns.entries)
-    assigns = assign(assigns, done: done, total: total, prep: prep_entries(assigns.entries))
+
+    assigns =
+      assign(assigns,
+        done: done,
+        total: total,
+        prep: prep_entries(assigns.entries),
+        prep_groups: prep_groups(assigns.entries)
+      )
 
     ~H"""
     <Layouts.app flash={@flash}>
@@ -125,6 +155,12 @@ defmodule CookingSchedulerWeb.PrepLive do
           @meal.serve_at,
           "%H:%M"
         )}
+        <span
+          id="prep-countdown"
+          class="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary"
+        >
+          {Dates.relative(@meal.date)}
+        </span>
       </p>
 
       <div
@@ -252,22 +288,28 @@ defmodule CookingSchedulerWeb.PrepLive do
           <p :if={@prep == []} id="no-prep" class="text-sm text-base-content/60">
             Nothing needs prepping before the day.
           </p>
-          <ul class="grid gap-2">
-            <li :for={e <- @prep} id={"prep-#{e.dish.id}"}>
-              <.tick
-                id={"tick-prepped-#{e.dish.id}"}
-                done={e.dish.prepped}
-                label={"#{e.dish.name} prepped"}
-                event="toggle_prepped"
-                meal_dish_id={e.dish.id}
-              >
-                <span class="font-semibold">{e.dish.name}</span>
-                <span class="block text-sm text-base-content/60">
-                  {Duration.format(e.dish.prep_minutes)} prep<span :if={e.dish.notes not in [nil, ""]}> · {e.dish.notes}</span>
-                </span>
-              </.tick>
-            </li>
-          </ul>
+          <div :for={group <- @prep_groups} id={"prep-#{group.day}"} class="mb-5">
+            <h3 class="mb-1 text-sm font-semibold">{group.title}</h3>
+            <p class="mb-2 text-xs text-base-content/60">{group.hint}</p>
+            <ul class="grid gap-2">
+              <li :for={e <- group.entries} id={"prep-#{e.dish.id}"}>
+                <.tick
+                  id={"tick-prepped-#{e.dish.id}"}
+                  done={e.dish.prepped}
+                  label={"#{e.dish.name} prepped"}
+                  event="toggle_prepped"
+                  meal_dish_id={e.dish.id}
+                >
+                  <span class="font-semibold">{e.dish.name}</span>
+                  <span class="block text-sm text-base-content/60">
+                    {Duration.format(e.dish.prep_minutes)} prep<span :if={
+                      e.dish.notes not in [nil, ""]
+                    }> · {e.dish.notes}</span>
+                  </span>
+                </.tick>
+              </li>
+            </ul>
+          </div>
         </section>
 
         <div class="mt-10 flex flex-wrap justify-end gap-2">

@@ -86,6 +86,7 @@ defmodule CookingSchedulerWeb do
       import Phoenix.HTML
       # Core UI components
       import CookingSchedulerWeb.CoreComponents
+      import CookingSchedulerWeb.IngredientComponents
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

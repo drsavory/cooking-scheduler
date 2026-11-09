@@ -126,7 +126,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     [onion, potatoes] = Meals.shopping_list(meal)
 
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
-    assert has_element?(lv, "#to-buy #shopping-#{onion.ingredient.id}")
+    assert has_element?(lv, "#to-buy-none #shopping-#{onion.ingredient.id}")
 
     lv |> element("#tick-shopping-#{onion.ingredient.id}") |> render_click()
     assert has_element?(lv, "#bought #shopping-#{onion.ingredient.id}")
@@ -202,5 +202,62 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
              lv,
              ~s|#dish-#{p.id}-ingredient-#{potatoes.ingredient.id}[data-state="missing"]|
            )
+  end
+
+  describe "aisles, staples and sharing" do
+    test "ingredients can be filed by aisle and marked as cupboard staples", %{
+      conn: conn,
+      meal: meal,
+      with_prep: p
+    } do
+      {:ok, _} = Meals.add_ingredient(p, "Salt")
+      [potatoes, salt] = Meals.shopping_list(meal)
+
+      {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
+      assert has_element?(lv, "#aisle-none #shopping-#{salt.ingredient.id}")
+
+      lv
+      |> form("#file-#{potatoes.ingredient.id}", ingredient: %{category: "veg", staple: "false"})
+      |> render_change()
+
+      assert has_element?(lv, "#aisle-veg #shopping-#{potatoes.ingredient.id}")
+
+      lv
+      |> form("#file-#{salt.ingredient.id}", ingredient: %{category: "", staple: "true"})
+      |> render_change()
+
+      # staples move to the cupboard, don't count towards the shop, and count as "in"
+      assert has_element?(lv, "#cupboard #shopping-#{salt.ingredient.id}")
+      assert has_element?(lv, "#shopping-progress", "0 of 1 bought")
+
+      lv |> element("#tick-shopping-#{potatoes.ingredient.id}") |> render_click()
+      assert Meals.get_meal_dish!(p.id).ingredients_in
+    end
+
+    test "the list can be shared as text", %{conn: conn, meal: meal, with_prep: p} do
+      {:ok, _} = Meals.add_ingredient(p, "Salt")
+      [_, salt] = Meals.shopping_list(meal)
+      {:ok, _} = Meals.update_ingredient(salt.ingredient, %{staple: true})
+
+      text = Meals.shopping_list_text(meal)
+      assert text =~ "Shopping for Sunday lunch"
+      assert text =~ "☐ Potatoes · 1 kg"
+      assert text =~ "Check the cupboard\n☐ Salt"
+
+      {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
+      assert has_element?(lv, "#share-shopping[data-text*='Potatoes']")
+    end
+  end
+
+  test "prep is grouped by when it should happen, with a countdown", %{
+    conn: conn,
+    meal: meal,
+    with_prep: p
+  } do
+    {:ok, _} = Meals.update_meal_dish(p, %{prep_day: "day_before"})
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
+    assert has_element?(lv, "#prep-day_before #prep-#{p.id}")
+    refute has_element?(lv, "#prep-before_cooking")
+    assert has_element?(lv, "#prep-countdown", "today")
   end
 end
