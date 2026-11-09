@@ -19,10 +19,11 @@ defmodule CookingScheduler.Search do
   @doc """
   Returns `%{pages: [...], meals: [...], dishes: [...]}` of display maps (`id`, `label`, `sub`,
   `icon`, `kind`) matching every whitespace-separated term in `query`. Dishes also match on
-  tags; pages carry their own `href`.
+  tags and on their ingredients ("where do I use sumac?"); pages carry their own `href`.
   """
   def search(query) do
     terms = query |> to_string() |> String.downcase() |> String.split(~r/\s+/, trim: true)
+    ingredients = if terms == [], do: %{}, else: Meals.ingredient_names_by_dish()
 
     pages = Enum.filter(@pages, &matches?([&1.label], terms))
 
@@ -42,14 +43,21 @@ defmodule CookingScheduler.Search do
 
     dishes =
       Meals.list_dishes()
-      |> Enum.filter(&matches?([&1.name | &1.tags], terms))
+      |> Enum.filter(&matches?([&1.name | &1.tags] ++ Map.get(ingredients, &1.id, []), terms))
       |> Enum.take(@limit)
       |> Enum.map(fn d ->
+        uses =
+          ingredients
+          |> Map.get(d.id, [])
+          |> Enum.filter(fn name ->
+            Enum.any?(terms, &String.contains?(String.downcase(name), &1))
+          end)
+
         %{
           kind: "dish",
           id: d.id,
           label: d.name,
-          sub: Enum.join(d.tags, ", "),
+          sub: Enum.join(d.tags ++ Enum.map(uses, &"uses #{&1}"), ", "),
           icon: method_icon(d.method)
         }
       end)

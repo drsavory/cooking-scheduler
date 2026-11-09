@@ -93,4 +93,47 @@ defmodule CookingSchedulerWeb.SummaryLiveTest do
     assert has_element?(lv, ~s|#summary-meal-#{meal.id}[href="/meals/#{meal.id}/summary"]|)
     refute has_element?(lv, "#cook-meal-#{meal.id}")
   end
+
+  test "shows planned against actual times for every timed dish", %{
+    conn: conn,
+    meal: meal,
+    done: done,
+    skipped: skipped
+  } do
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/summary")
+    # planned in 12:30 (serve 13:30 - 60), went in 10:00, out 11:00: 2h 30m early
+    assert has_element?(lv, "#actuals-#{done.id}", "12:30")
+    assert has_element?(lv, "#actuals-#{done.id}", "10:00")
+    assert has_element?(lv, "#actuals-#{done.id}", "11:00")
+    assert has_element?(lv, "#actuals-#{done.id}", "2h 30m early")
+    assert has_element?(lv, "#actuals-#{skipped.id}", "not cooked")
+  end
+
+  test "notes for next time are saved as you type", %{conn: conn, meal: meal, done: done} do
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/summary")
+
+    lv |> form("#meal-notes-form", meal: %{next_time: "Start an hour earlier"}) |> render_change()
+    assert Meals.get_meal!(meal.id).next_time == "Start an hour earlier"
+
+    lv |> form("#dish-notes-#{done.id}", dish: %{next_time: "Brine it"}) |> render_change()
+    assert Meals.get_meal_dish!(done.id).next_time == "Brine it"
+  end
+
+  test "planning it again uses the times that actually happened", %{
+    conn: conn,
+    meal: meal,
+    done: done
+  } do
+    {:ok, _} = Meals.add_extra(done, 15)
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/summary")
+    {:error, {:live_redirect, %{to: to}}} = lv |> element("#plan-again") |> render_click()
+
+    new = Meals.list_meals() |> Enum.find(&(to == "/meals/#{&1.id}/plan"))
+    [turkey, sprouts] = Meals.list_meal_dishes(new) |> Enum.sort_by(& &1.name, :desc)
+    # cooked 10:00 to 11:00, so the real time wins over planned + extra
+    assert turkey.cook_minutes == 60
+    assert turkey.cook_started_at == nil
+    # never cooked: the plan stays
+    assert sprouts.cook_minutes == 10
+  end
 end

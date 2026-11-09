@@ -1,7 +1,7 @@
 defmodule CookingSchedulerWeb.HomeLive do
   use CookingSchedulerWeb, :live_view
 
-  alias CookingScheduler.{Duration, Kitchen, Meals}
+  alias CookingScheduler.{Dates, Duration, Kitchen, Meals}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -20,14 +20,48 @@ defmodule CookingSchedulerWeb.HomeLive do
 
   defp load_meals(socket) do
     saved = Meals.list_dishes()
+    meals = Meals.list_meal_summaries()
 
     socket
-    |> assign(:meals, Meals.list_meal_summaries())
+    |> assign(:meals, meals)
+    |> assign(:next, next_up(meals))
     |> assign(:saved, saved)
     |> assign(:tags, saved |> Enum.flat_map(& &1.tags) |> Enum.frequencies() |> Enum.sort())
     |> assign_new(:tag, fn -> nil end)
     |> assign(:usage, Meals.usage_by_dish())
+    |> assign(
+      :new_meal,
+      to_form(%{"name" => "", "date" => Date.to_iso8601(Date.utc_today()), "serve_at" => "13:30"},
+        as: :meal
+      )
+    )
   end
+
+  # The meal to get on with (ADR 0025): the soonest unfinished one on or after today, or
+  # failing that the most recent unfinished one.
+  defp next_up(meals) do
+    today = Date.utc_today()
+    open = Enum.reject(meals, &(&1.status == :complete))
+
+    case Enum.filter(open, &(Date.compare(&1.meal.date, today) != :lt)) do
+      [] -> List.first(open)
+      coming -> Enum.min_by(coming, &{Date.to_erl(&1.meal.date), &1.meal.id})
+    end
+  end
+
+  # What a library dish taught us last time it was cooked.
+  defp last_cooked(usage, dish_id) do
+    usage
+    |> Map.get(dish_id, [])
+    |> Enum.find_value(fn {meal, md} ->
+      (meal.status == :complete and md.cook_done_at) &&
+        %{meal: meal, dish: md, lateness: Meals.lateness(meal, md)}
+    end)
+  end
+
+  defp lateness_label(0), do: "on time"
+  defp lateness_label(m) when m > 0, do: "ran #{Duration.format(m)} over"
+  defp lateness_label(m), do: "#{Duration.format(-m)} early"
 
   @impl true
   def handle_event("filter_tag", %{"tag" => tag}, socket) do
@@ -36,14 +70,32 @@ defmodule CookingSchedulerWeb.HomeLive do
     {:noreply, assign(socket, :tag, tag)}
   end
 
-  def handle_event("new_meal", %{"from" => from}, socket) do
-    {:ok, meal} =
+  def handle_event("new_meal", %{"from" => from} = params, socket) do
+    attrs =
+      params
+      |> Map.get("meal", %{})
+      |> Map.take(["name", "date", "serve_at"])
+      |> Enum.reject(fn {_, v} -> v in [nil, ""] end)
+      |> Map.new()
+
+    result =
       case from do
-        "" -> Meals.create_meal()
-        id -> id |> Meals.get_meal!() |> Meals.create_meal_from()
+        "" ->
+          Meals.create_meal(Map.put_new(attrs, "name", "New meal"))
+
+        id ->
+          id
+          |> Meals.get_meal!()
+          |> Meals.create_meal_from(attrs, actual_times: params["actual_times"] == "true")
       end
 
-    {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/plan")}
+    case result do
+      {:ok, meal} ->
+        {:noreply, push_navigate(socket, to: ~p"/meals/#{meal.id}/plan")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Check the meal's name, date and time")}
+    end
   end
 
   def handle_event("delete_meal", %{"id" => id}, socket) do
@@ -162,38 +214,150 @@ defmodule CookingSchedulerWeb.HomeLive do
           What are we <span class="gradient-text">cooking</span>?
         </h1>
 
+        <div
+          :if={@next}
+          id="next-up"
+          class="pop-in mt-6 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[1.75rem] bg-gradient-to-br from-primary via-primary to-secondary p-5 text-primary-content shadow-lg shadow-primary/20"
+        >
+          <.date_tile date={@next.meal.date} />
+          <div class="min-w-0 flex-1 basis-56">
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary-content/70">
+              Next up · {Dates.relative(@next.meal.date)}
+            </p>
+            <h2 class="truncate text-2xl font-extrabold tracking-tight">{@next.meal.name}</h2>
+            <p class="text-sm text-primary-content/80">
+              Dinner at {Calendar.strftime(@next.meal.serve_at, "%H:%M")} · {plural(
+                @next.dishes,
+                "dish",
+                "dishes"
+              )}
+              <span :if={@next.meal.next_time not in [nil, ""]}>· {@next.meal.next_time}</span>
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <%= case @next.status do %>
+              <% :planning -> %>
+                <.link
+                  id="next-plan"
+                  navigate={~p"/meals/#{@next.meal.id}/plan"}
+                  class="btn rounded-full border-0 bg-white text-primary shadow hover:bg-white/90"
+                >
+                  <.icon name="hero-table-cells" class="size-4" /> Keep planning
+                </.link>
+                <button
+                  id="next-prep"
+                  phx-click={JS.push("start_prepping", value: %{id: @next.meal.id})}
+                  class="btn btn-ghost rounded-full text-primary-content hover:bg-white/20"
+                >
+                  <.icon name="hero-shopping-bag-micro" class="size-4" /> Start prepping
+                </button>
+              <% :prepping -> %>
+                <.link
+                  id="next-prep"
+                  navigate={~p"/meals/#{@next.meal.id}/prep"}
+                  class="btn rounded-full border-0 bg-white text-primary shadow hover:bg-white/90"
+                >
+                  <.icon name="hero-clipboard-document-check" class="size-4" /> Open prep
+                </.link>
+                <.link
+                  id="next-cook"
+                  navigate={~p"/meals/#{@next.meal.id}/cook"}
+                  class="btn btn-ghost rounded-full text-primary-content hover:bg-white/20"
+                >
+                  <.icon name="hero-play-solid" class="size-4" /> Cook
+                </.link>
+              <% _ -> %>
+                <.link
+                  id="next-cook"
+                  navigate={~p"/meals/#{@next.meal.id}/cook"}
+                  class="btn rounded-full border-0 bg-white text-primary shadow hover:bg-white/90"
+                >
+                  <.icon name="hero-play-solid" class="size-4" /> Back to cooking
+                </.link>
+            <% end %>
+          </div>
+        </div>
+
         <form
           id="new-meal-form"
           phx-submit="new_meal"
-          class="glass mt-6 flex flex-wrap items-center gap-3 rounded-[1.75rem] p-3"
+          class="glass mt-6 grid gap-3 rounded-[1.75rem] p-4"
         >
-          <div class="relative min-w-0 flex-1 basis-64">
-            <.icon
-              name="hero-document-duplicate"
-              class="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-base-content/50"
+          <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_7rem]">
+            <input
+              type="text"
+              id="new-meal-name"
+              name="meal[name]"
+              value={@new_meal[:name].value}
+              placeholder="Name the meal, e.g. Christmas 2026"
+              aria-label="Meal name"
+              maxlength="80"
+              class="input h-12 w-full rounded-full border-0 bg-base-200 px-5 text-base"
             />
-            <select
-              id="new-meal-from"
-              name="from"
-              aria-label="Start from"
-              class="select h-12 w-full rounded-full border-0 bg-base-200 pl-11 text-base text-base-content"
-            >
-              <option value="" class="bg-base-100 text-base-content">Start from scratch</option>
-              <option :for={%{meal: m} <- @meals} value={m.id} class="bg-base-100 text-base-content">
-                Start from {m.name} ({date_label(m.date)})
-              </option>
-            </select>
+            <input
+              type="date"
+              id="new-meal-date"
+              name="meal[date]"
+              value={@new_meal[:date].value}
+              aria-label="Date"
+              class="input h-12 w-full rounded-full border-0 bg-base-200 px-4"
+            />
+            <input
+              type="time"
+              id="new-meal-time"
+              name="meal[serve_at]"
+              value={@new_meal[:serve_at].value}
+              aria-label="Dinner time"
+              class="input h-12 w-full rounded-full border-0 bg-base-200 px-4 text-center"
+            />
           </div>
-          <button id="create-meal" type="submit" class="btn btn-glow h-12 rounded-full px-6 text-base">
-            <.icon name="hero-sparkles" class="size-5" /> Create meal
-          </button>
-          <.link
-            id="create-dish"
-            navigate={~p"/dishes/new"}
-            class="btn btn-glass h-12 rounded-full px-5 text-base"
-          >
-            <.icon name="hero-plus" class="size-5" /> Create dish
-          </.link>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="relative min-w-0 flex-1 basis-64">
+              <.icon
+                name="hero-document-duplicate"
+                class="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-base-content/50"
+              />
+              <select
+                id="new-meal-from"
+                name="from"
+                aria-label="Start from"
+                class="select h-12 w-full rounded-full border-0 bg-base-200 pl-11 text-base text-base-content"
+              >
+                <option value="" class="bg-base-100 text-base-content">Start from scratch</option>
+                <option :for={%{meal: m} <- @meals} value={m.id} class="bg-base-100 text-base-content">
+                  Start from {m.name} ({date_label(m.date)})
+                </option>
+              </select>
+            </div>
+            <label
+              :if={Enum.any?(@meals, &(&1.status == :complete))}
+              class="flex cursor-pointer items-center gap-2 text-sm"
+              title="For a meal you've cooked: each dish starts with how long it really took"
+            >
+              <input type="hidden" name="actual_times" value="false" />
+              <input
+                id="new-meal-actual"
+                type="checkbox"
+                name="actual_times"
+                value="true"
+                class="checkbox checkbox-sm"
+              /> Use the times that actually happened
+            </label>
+            <button
+              id="create-meal"
+              type="submit"
+              class="btn btn-glow h-12 rounded-full px-6 text-base"
+            >
+              <.icon name="hero-sparkles" class="size-5" /> Create meal
+            </button>
+            <.link
+              id="create-dish"
+              navigate={~p"/dishes/new"}
+              class="btn btn-glass h-12 rounded-full px-5 text-base"
+            >
+              <.icon name="hero-plus" class="size-5" /> Create dish
+            </.link>
+          </div>
         </form>
       </section>
 
@@ -403,6 +567,22 @@ defmodule CookingSchedulerWeb.HomeLive do
                   "meal",
                   "meals"
                 )}
+              </div>
+              <div
+                :if={last = last_cooked(@usage, d.id)}
+                id={"last-cooked-#{d.id}"}
+                class="mt-0.5 text-xs text-base-content/60"
+              >
+                Last cooked {last.meal.name} ·
+                <span class={[
+                  last.lateness > 0 && "text-warning",
+                  last.lateness == 0 && "text-success"
+                ]}>
+                  {lateness_label(last.lateness)}
+                </span>
+                <span :if={last.dish.next_time not in [nil, ""]} class="line-clamp-1 italic">
+                  “{last.dish.next_time}”
+                </span>
               </div>
               <div :if={d.tags != []} id={"dish-tags-#{d.id}"} class="mt-1 flex flex-wrap gap-1">
                 <span

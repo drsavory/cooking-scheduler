@@ -173,4 +173,79 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       assert Meals.list_meals() == []
     end
   end
+
+  describe "next up and the new meal form" do
+    setup do
+      {:ok, _} = Kitchen.add_oven(:gas_mark)
+      :ok
+    end
+
+    test "the soonest unfinished meal is the hero, with the right next step", %{conn: conn} do
+      {:ok, past} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
+
+      {:ok, soon} =
+        Meals.create_meal(%{name: "Christmas 2026", date: Date.add(Date.utc_today(), 3)})
+
+      {:ok, _later} = Meals.create_meal(%{name: "New Year", date: Date.add(Date.utc_today(), 10)})
+      {:ok, _} = Meals.set_prep_status(soon, :prepping)
+
+      {:ok, lv, _} = live(conn, ~p"/")
+      assert has_element?(lv, "#next-up", "Christmas 2026")
+      assert has_element?(lv, "#next-up", "in 3 days")
+      assert has_element?(lv, ~s|#next-prep[href="/meals/#{soon.id}/prep"]|)
+      _ = past
+    end
+
+    test "a new meal takes its name, date and time from the form", %{conn: conn} do
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      {:error, {:live_redirect, %{to: to}}} =
+        lv
+        |> form("#new-meal-form",
+          meal: %{name: "Boxing Day", date: "2026-12-26", serve_at: "15:00"}
+        )
+        |> render_submit()
+
+      [meal] = Meals.list_meals()
+      assert to == "/meals/#{meal.id}/plan"
+      assert %{name: "Boxing Day", date: ~D[2026-12-26], serve_at: ~T[15:00:00]} = meal
+    end
+
+    test "starting from a cooked meal can use the real times", %{conn: conn} do
+      {:ok, old} = Meals.create_meal(%{name: "Christmas 2025", date: ~D[2025-12-25]})
+
+      {:ok, d} =
+        Meals.create_meal_dish(old, %{
+          name: "Turkey",
+          method: :ring,
+          ring_size: :large,
+          cook_minutes: 60
+        })
+
+      {:ok, _} = Meals.start_cooking(d, 600)
+      {:ok, _} = Meals.finish_cooking(Meals.get_meal_dish!(d.id), 690)
+      {:ok, _} = Meals.finish_meal(Meals.get_meal!(old.id))
+
+      {:ok, lv, _} = live(conn, ~p"/")
+      assert has_element?(lv, "#new-meal-actual")
+      # out at 11:30 for a 13:30 dinner
+      assert has_element?(lv, "#last-cooked-#{Meals.get_meal_dish!(d.id).dish_id}", "2h early")
+
+      {:error, {:live_redirect, %{to: to}}} =
+        lv |> form("#new-meal-form", %{from: old.id, actual_times: "true"}) |> render_submit()
+
+      new = Meals.list_meals() |> Enum.find(&(to == "/meals/#{&1.id}/plan"))
+      assert [%{cook_minutes: 90}] = Meals.list_meal_dishes(new)
+    end
+
+    test "spotlight finds dishes by ingredient", %{conn: conn} do
+      {:ok, dish} = Meals.create_dish(%{name: "Sprouts", method: :ring, ring_size: :small})
+      {:ok, _} = Meals.add_ingredient(dish, "Chestnuts", 100, :g)
+      {:ok, lv, _} = live(conn, ~p"/")
+
+      render_hook(lv, "spotlight_search", %{"q" => "chest"})
+      assert_reply(lv, %{dishes: [%{label: "Sprouts", sub: sub}]})
+      assert sub =~ "uses Chestnuts"
+    end
+  end
 end
