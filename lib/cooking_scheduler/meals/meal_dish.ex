@@ -6,6 +6,8 @@ defmodule CookingScheduler.Meals.MealDish do
   alias CookingScheduler.Kitchen.Appliance
 
   @methods ~w(oven ring appliance)a
+  # When the prep for a dish happens: days ahead (Prep screen) or right before it goes on.
+  @prep_days ~w(day_before morning_of before_cooking)a
 
   # How much of an oven's space a dish takes up, in twelfths so halves, thirds and quarters
   # all add up exactly. The oven holds 12.
@@ -25,10 +27,16 @@ defmodule CookingScheduler.Meals.MealDish do
     belongs_to :meal, CookingScheduler.Meals.Meal
     belongs_to :dish, CookingScheduler.Meals.Dish
     has_many :dish_ingredients, CookingScheduler.Meals.DishIngredient
+    # Courses: minutes after (or, negative, before) the meal's serving time this dish is
+    # ready. 0 means with the main.
+    field :serve_offset_minutes, :integer, default: 0
+    field :prep_day, Ecto.Enum, values: @prep_days, default: :before_cooking
     field :notes, :string
     field :link, :string
     field :ingredients_in, :boolean, default: false
     field :prepped, :boolean, default: false
+    # Written after the meal: what to change next time.
+    field :next_time, :string
 
     # Live progress while cooking (set from the cook screen, not the planning form).
     field :cook_started_at, :integer
@@ -39,6 +47,30 @@ defmodule CookingScheduler.Meals.MealDish do
   end
 
   def methods, do: @methods
+  def prep_days, do: @prep_days
+
+  @doc "Prep timings as `{label, value}` pairs for a select."
+  def prep_day_options,
+    do: [
+      {"Just before cooking", :before_cooking},
+      {"Morning of", :morning_of},
+      {"Day before", :day_before}
+    ]
+
+  @doc "Common course offsets as `{label, minutes}` pairs; anything else is \"custom\"."
+  def serve_offset_options,
+    do: [
+      {"Starter · 45m before", -45},
+      {"With the main", 0},
+      {"Pudding · 45m after", 45},
+      {"Pudding · 1h after", 60},
+      {"Cheese · 1h 30m after", 90}
+    ]
+
+  @doc ~s|"Starter", "Main" or "Pudding" from a serving offset.|
+  def course(offset) when offset < 0, do: "Starter"
+  def course(0), do: "Main"
+  def course(_), do: "Pudding"
 
   @doc "Oven shares as `{label, value}` pairs for a select."
   def oven_share_options,
@@ -51,7 +83,7 @@ defmodule CookingScheduler.Meals.MealDish do
   def oven_units(share), do: Keyword.fetch!(@oven_shares, share || :third)
 
   @fields ~w(name method prep_minutes cook_minutes rest_minutes temp temp_unit ring_size oven_share
-             appliance_id notes link ingredients_in prepped)a
+             appliance_id notes link ingredients_in prepped serve_offset_minutes prep_day next_time)a
 
   def changeset(dish, attrs) do
     dish
@@ -60,7 +92,19 @@ defmodule CookingScheduler.Meals.MealDish do
     |> validate_length(:name, max: 80)
     |> RecipeLink.validate(:link)
     |> default_zero([:prep_minutes, :cook_minutes, :rest_minutes])
+    |> validate_serve_offset()
     |> validate_by_method()
+  end
+
+  @doc "Shared with `Dish`: a course offset is within a few hours either side of the meal."
+  def validate_serve_offset(changeset) do
+    changeset
+    |> update_change(:serve_offset_minutes, &(&1 || 0))
+    |> validate_number(:serve_offset_minutes,
+      greater_than_or_equal_to: -360,
+      less_than_or_equal_to: 360,
+      message: "keep courses within 6 hours of the meal"
+    )
   end
 
   # Blank durations mean "none", not "missing".

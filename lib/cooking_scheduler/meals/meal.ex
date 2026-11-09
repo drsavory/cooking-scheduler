@@ -14,6 +14,10 @@ defmodule CookingScheduler.Meals.Meal do
 
     # Set (not cast) when the cook ends the meal early.
     field :finished_at, :utc_datetime
+    # Oven tasks done on the day ("preheat:<oven id>:<dish id>"); cleared with the progress.
+    field :oven_marks, {:array, :string}, default: []
+    # Written after the meal: what to change next time.
+    field :next_time, :string
 
     has_many :meal_dishes, CookingScheduler.Meals.MealDish
 
@@ -22,9 +26,10 @@ defmodule CookingScheduler.Meals.Meal do
 
   def changeset(meal, attrs) do
     meal
-    |> cast(attrs, [:name, :date, :serve_at])
+    |> cast(attrs, [:name, :date, :serve_at, :next_time])
     |> validate_required([:name, :date, :serve_at])
     |> validate_length(:name, max: 80)
+    |> validate_length(:next_time, max: 2000)
   end
 
   @doc "Serving time as minutes after midnight."

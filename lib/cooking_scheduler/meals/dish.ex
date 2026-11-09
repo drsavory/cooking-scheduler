@@ -9,10 +9,11 @@ defmodule CookingScheduler.Meals.Dish do
 
   alias CookingScheduler.{Duration, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
+  alias CookingScheduler.Meals.MealDish
 
   # The planning values that get copied between a dish and a meal dish.
   @template ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
-               rest_minutes notes link)a
+               rest_minutes notes link serve_offset_minutes prep_day)a
 
   schema "dishes" do
     field :name, :string
@@ -24,6 +25,8 @@ defmodule CookingScheduler.Meals.Dish do
     field :prep_minutes, Duration, default: 0
     field :cook_minutes, Duration, default: 0
     field :rest_minutes, Duration, default: 0
+    field :serve_offset_minutes, :integer, default: 0
+    field :prep_day, Ecto.Enum, values: MealDish.prep_days(), default: :before_cooking
     field :notes, :string
     field :link, :string
     # Free-form labels ("protein", "veg", ...). Library-only: not copied into meals.
@@ -52,6 +55,7 @@ defmodule CookingScheduler.Meals.Dish do
     |> validate_length(:name, max: 80)
     |> unique_constraint(:name, name: :dishes_lower_name_index, message: "is already a dish")
     |> RecipeLink.validate(:link)
+    |> MealDish.validate_serve_offset()
     |> validate_by_method()
   end
 

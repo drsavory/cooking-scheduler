@@ -16,6 +16,8 @@ defmodule CookingScheduler.Kitchen.Appliance do
     field :max_temp, :float
     field :size, Ecto.Enum, values: @ring_sizes
     field :notes, :string
+    # Ovens: how long before the first dish goes in to switch it on (ADR 0019).
+    field :preheat_minutes, :integer, default: 15
 
     timestamps(type: :utc_datetime)
   end
@@ -67,7 +69,16 @@ defmodule CookingScheduler.Kitchen.Appliance do
 
   def changeset(appliance, attrs) do
     appliance
-    |> cast(attrs, [:kind, :name, :temp_unit, :min_temp, :max_temp, :size, :notes])
+    |> cast(attrs, [
+      :kind,
+      :name,
+      :temp_unit,
+      :min_temp,
+      :max_temp,
+      :size,
+      :notes,
+      :preheat_minutes
+    ])
     |> validate_required([:kind])
     |> default_ring_name()
     |> validate_required([:name])
@@ -98,6 +109,11 @@ defmodule CookingScheduler.Kitchen.Appliance do
         |> validate_number(:min_temp, greater_than_or_equal_to: 0)
         |> validate_gas_mark()
         |> validate_min_below_max()
+        |> update_change(:preheat_minutes, &(&1 || 0))
+        |> validate_number(:preheat_minutes,
+          greater_than_or_equal_to: 0,
+          less_than_or_equal_to: 120
+        )
         |> clear_fields([:size])
 
       :ring ->
