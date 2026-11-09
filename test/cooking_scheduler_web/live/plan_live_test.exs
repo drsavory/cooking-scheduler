@@ -17,6 +17,18 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
 
   defp dishes(meal), do: Meals.list_meal_dishes(meal)
 
+  # Adds a dish the way the screen does: open "Add a dish", switch to the New dish tab, and
+  # submit the embedded form. Returns the parent's HTML once the modal has closed.
+  defp add_new_dish(lv, attrs) do
+    lv |> element("#add-dish") |> render_click()
+    lv |> element("#add-tab-new") |> render_click()
+    child = find_live_child(lv, "new-dish-form")
+    # Method first: the ring size box only appears once "Hob" is chosen.
+    child |> form("#dish-form", dish: Map.take(attrs, [:method])) |> render_change()
+    child |> form("#dish-form", dish: attrs) |> render_submit()
+    render(lv)
+  end
+
   test "starts empty with an offer to load last year's menu", %{
     conn: conn,
     meal: meal,
@@ -62,8 +74,9 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     path: path
   } do
     {:ok, lv, _} = live(conn, path)
-    lv |> element(~s|#add-dish button[phx-value-method="oven"]|) |> render_click()
+    add_new_dish(lv, %{name: "Roast", method: :oven, temp: "7", cook_minutes: "1h"})
     [dish] = dishes(meal)
+    refute has_element?(lv, "#add-dish-modal")
 
     lv
     |> form("#dish-#{dish.id}-form",
@@ -77,7 +90,7 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
 
   test "bad durations are flagged and not saved", %{conn: conn, meal: meal, path: path} do
     {:ok, lv, _} = live(conn, path)
-    lv |> element(~s|#add-dish button[phx-value-method="oven"]|) |> render_click()
+    add_new_dish(lv, %{name: "Roast", method: :oven, temp: "7", cook_minutes: "1h"})
     [dish] = dishes(meal)
 
     html =
@@ -90,8 +103,14 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
   test "hob dishes get individual rings; running out is flagged", %{conn: conn, path: path} do
     {:ok, lv, _} = live(conn, path)
 
-    for _ <- 1..4,
-        do: lv |> element(~s|#add-dish button[phx-value-method="ring"]|) |> render_click()
+    for n <- 1..4,
+        do:
+          add_new_dish(lv, %{
+            name: "Pan #{n}",
+            method: :ring,
+            ring_size: :medium,
+            cook_minutes: "20m"
+          })
 
     html = render(lv)
     assert html =~ "Medium ring"
@@ -101,7 +120,7 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
 
   test "removing a dish", %{conn: conn, meal: meal, path: path} do
     {:ok, lv, _} = live(conn, path)
-    lv |> element(~s|#add-dish button[phx-value-method="appliance"]|) |> render_click()
+    add_new_dish(lv, %{name: "Sprouts", method: :appliance, cook_minutes: "1h"})
     [dish] = dishes(meal)
     confirm_dialog(lv, "delete-dish-#{dish.id}")
     assert dishes(meal) == []
@@ -117,17 +136,74 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     })
 
     {:ok, lv, _} = live(conn, path)
+    lv |> element("#add-dish") |> render_click()
     lv |> element("#saved-picker button", "Inferno") |> render_click()
 
     assert has_element?(lv, "#flash-error", "Inferno can't be added")
     assert has_element?(lv, "#saved-picker button", "Inferno")
   end
 
+  test "picking a dish from the library adds a copy and closes the modal", %{
+    conn: conn,
+    meal: meal,
+    path: path
+  } do
+    {:ok, gravy} =
+      Meals.create_dish(%{name: "Gravy", method: :ring, ring_size: :small, cook_minutes: "15m"})
+
+    {:ok, _} =
+      Meals.create_dish(%{
+        name: "Bread sauce",
+        method: :ring,
+        ring_size: :small,
+        cook_minutes: "20m"
+      })
+
+    {:ok, lv, _} = live(conn, path)
+    lv |> element("#add-dish") |> render_click()
+    assert has_element?(lv, "#add-dish-modal")
+    assert has_element?(lv, "#saved-picker button", "Bread sauce")
+
+    lv |> element("#saved-filter") |> render_change(%{q: "gra"})
+    refute has_element?(lv, "#saved-picker button", "Bread sauce")
+
+    lv |> element("#saved-picker button", "Gravy") |> render_click()
+
+    refute has_element?(lv, "#add-dish-modal")
+    assert [%{name: "Gravy", dish_id: dish_id}] = dishes(meal)
+    assert dish_id == gravy.id
+
+    # Already in the meal, so no longer offered.
+    lv |> element("#add-dish") |> render_click()
+    refute has_element?(lv, "#saved-picker button", "Gravy")
+  end
+
+  test "a new dish made in the modal lands in the library and the meal", %{
+    conn: conn,
+    meal: meal,
+    path: path
+  } do
+    {:ok, lv, _} = live(conn, path)
+    add_new_dish(lv, %{name: "Nut roast", method: :oven, temp: "6", cook_minutes: "1h 10m"})
+
+    assert [%{name: "Nut roast", cook_minutes: 70}] = dishes(meal)
+    assert Enum.any?(Meals.list_dishes(), &(&1.name == "Nut roast"))
+    assert has_element?(lv, "#flash-info", "Nut roast added")
+  end
+
+  test "cancelling the new dish form closes the modal", %{conn: conn, path: path} do
+    {:ok, lv, _} = live(conn, path)
+    lv |> element("#add-dish") |> render_click()
+    lv |> element("#add-tab-new") |> render_click()
+    lv |> find_live_child("new-dish-form") |> element("#cancel-dish") |> render_click()
+    refute has_element?(lv, "#add-dish-modal")
+  end
+
   test "changes made on another screen show up here", %{conn: conn, meal: meal, path: path} do
     {:ok, lv, _} = live(conn, path)
     {:ok, other, _} = live(Phoenix.ConnTest.build_conn(), path)
 
-    other |> element(~s|#add-dish button[phx-value-method="ring"]|) |> render_click()
+    add_new_dish(other, %{name: "Peas", method: :ring, ring_size: :small, cook_minutes: "5m"})
     [dish] = dishes(meal)
 
     assert has_element?(lv, "#dish-card-#{dish.id}")
