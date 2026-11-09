@@ -14,6 +14,7 @@ defmodule CookingSchedulerWeb.PlanLive do
      |> assign(:invalid, %{})
      |> assign(:adding, nil)
      |> assign(:saved_query, "")
+     |> assign(:from_meal, nil)
      |> assign(
        :other_meals,
        for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
@@ -39,11 +40,43 @@ defmodule CookingSchedulerWeb.PlanLive do
   defp assign_plan(socket, dishes, serve, kitchen) do
     entries = Planner.plan(dishes, serve, kitchen)
 
+    # One suggestion list per dish that has a problem (ADR 0020).
+    fixes =
+      for e <- entries, e.issues != [], into: %{} do
+        {e.dish.id, Planner.suggest(dishes, serve, kitchen, e.dish.id)}
+      end
+
     socket
     |> assign(:entries, entries)
+    |> assign(:sections, sections(entries))
+    |> assign(:problems, Enum.filter(entries, &(&1.issues != [])))
+    |> assign(:fixes, fixes)
     |> assign(:load, Planner.load(entries, kitchen))
-    |> assign(:serve, serve)
+    |> assign(:oven_events, Planner.oven_events(entries, kitchen))
+    |> assign(:serve, Planner.last_serve(entries, serve))
   end
+
+  # The plan reads like the day: rows in the order you start them, split into parts of the day
+  # (ADR 0020). A dish with no cooking time can't be placed, so it goes last.
+  defp sections(entries) do
+    entries
+    |> Enum.sort_by(&{&1.dish.cook_minutes == 0, start_of(&1), &1.cook_at, &1.dish.name})
+    |> Enum.chunk_by(&day_part(start_of(&1), &1.dish.cook_minutes == 0))
+    |> Enum.map(fn [first | _] = rows ->
+      %{label: day_part(start_of(first), first.dish.cook_minutes == 0), entries: rows}
+    end)
+  end
+
+  defp start_of(%{dish: %{prep_minutes: p, prep_day: :before_cooking}} = e) when p > 0,
+    do: e.prep_at
+
+  defp start_of(e), do: e.cook_at
+
+  defp day_part(_at, true), do: "Needs a cooking time"
+  defp day_part(at, _) when at < 0, do: "The day before"
+  defp day_part(at, _) when at < 12 * 60, do: "Morning"
+  defp day_part(at, _) when at < 17 * 60, do: "Afternoon"
+  defp day_part(_at, _), do: "Evening"
 
   @impl true
   def handle_event("open_add", _params, socket) do
@@ -58,6 +91,40 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   def handle_event("add_tab", %{"tab" => "pick"}, socket),
     do: {:noreply, assign(socket, :adding, :pick)}
+
+  def handle_event("add_tab", %{"tab" => "meal"}, socket),
+    do: {:noreply, assign(socket, :adding, :meal)}
+
+  def handle_event("pick_from_meal", %{"meal" => ""}, socket),
+    do: {:noreply, assign(socket, :from_meal, nil)}
+
+  def handle_event("pick_from_meal", %{"meal" => id}, socket) do
+    meal = Meals.get_meal!(id)
+    {:noreply, assign(socket, :from_meal, %{meal: meal, dishes: Meals.list_meal_dishes(meal)})}
+  end
+
+  def handle_event("add_from_meal", %{"id" => id}, socket) do
+    dish = Meals.get_meal_dish!(id)
+
+    case Meals.copy_meal_dish(dish, socket.assigns.meal) do
+      {:ok, _} -> {:noreply, socket |> put_flash(:info, "#{dish.name} added") |> load()}
+      {:error, _} -> {:noreply, put_flash(socket, :error, "#{dish.name} couldn't be added")}
+    end
+  end
+
+  # A planner suggestion, applied to the dish (ADR 0020).
+  def handle_event("apply_fix", %{"dish" => id, "index" => index}, socket) do
+    id = String.to_integer(id)
+
+    case socket.assigns.fixes |> Map.get(id, []) |> Enum.at(String.to_integer(index)) do
+      nil ->
+        {:noreply, socket}
+
+      %{attrs: attrs, label: label} ->
+        {:ok, _} = Meals.update_meal_dish(Meals.get_meal_dish!(id), attrs)
+        {:noreply, socket |> put_flash(:info, "Done: #{String.downcase(label)}") |> load()}
+    end
+  end
 
   def handle_event("filter_saved", %{"q" => q}, socket),
     do: {:noreply, assign(socket, :saved_query, q)}
@@ -162,6 +229,25 @@ defmodule CookingSchedulerWeb.PlanLive do
   defp oven_options(kitchen),
     do: [{"Choose for me", ""} | for(o <- kitchen, o.kind == :oven, do: {o.name, o.id})]
 
+  # The usual courses, plus the dish's own value if it's something else.
+  defp serve_options(current) do
+    presets = MealDish.serve_offset_options()
+
+    if current in [nil | Enum.map(presets, &elem(&1, 1))],
+      do: presets,
+      else: presets ++ [{"Custom · #{offset_label(current)}", current}]
+  end
+
+  defp offset_label(m) when m < 0, do: "#{Duration.format(-m)} before"
+  defp offset_label(m), do: "#{Duration.format(m)} after"
+
+  defp temp_text({t, :gas_mark}),
+    do: "gas #{CookingScheduler.Kitchen.Appliance.fmt_temp(t, :gas_mark)}"
+
+  defp temp_text({t, unit}),
+    do:
+      "#{CookingScheduler.Kitchen.Appliance.fmt_temp(t, unit)} #{CookingScheduler.Kitchen.Appliance.temp_unit_label(unit)}"
+
   defp appliance_options(kitchen),
     do: [{"Choose…", ""} | for(a <- kitchen, a.kind == :other, do: {a.name, a.id})]
 
@@ -177,6 +263,7 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   attr :load, :list, required: true
   attr :serve, :integer, required: true
+  attr :events, :list, default: []
 
   # One strip per appliance: bar height is how full it is, across the cooking window.
   defp kitchen_load(assigns) do
@@ -277,6 +364,33 @@ defmodule CookingSchedulerWeb.PlanLive do
             </div>
           </div>
         <% end %>
+      </div>
+
+      <div
+        :if={@events != []}
+        id="oven-events"
+        class="mt-3 flex flex-wrap gap-1.5 border-t border-base-300 pt-3"
+      >
+        <span
+          :for={ev <- @events}
+          id={"oven-event-#{String.replace(ev.id, ":", "-")}"}
+          class="inline-flex items-center gap-1.5 rounded-full bg-base-200 px-2.5 py-1 text-xs"
+        >
+          <.icon
+            name={
+              if ev.kind == :preheat, do: "hero-power-micro", else: "hero-adjustments-vertical-micro"
+            }
+            class="size-3.5 text-primary"
+          />
+          <span class="font-semibold tabular-nums">{Duration.clock(ev.at)}</span>
+          <span>
+            {if ev.kind == :preheat,
+              do: "Switch on #{ev.appliance.name}",
+              else: "#{ev.appliance.name} to"}
+            <b>{temp_text(ev.temp)}</b>
+            <span class="opacity-60">for {ev.dish.name}</span>
+          </span>
+        </span>
       </div>
     </section>
     """
@@ -451,6 +565,13 @@ defmodule CookingSchedulerWeb.PlanLive do
         time={@entry.out_at}
       />
       <.step :if={@entry.dish.rest_minutes > 0} label="Serve" time={@entry.serve_at} />
+      <span
+        :if={@entry.dish.serve_offset_minutes != 0}
+        class="badge badge-accent badge-soft badge-sm"
+        title="Served at a different time from the main"
+      >
+        {MealDish.course(@entry.dish.serve_offset_minutes)}
+      </span>
     </div>
     """
   end
@@ -466,6 +587,7 @@ defmodule CookingSchedulerWeb.PlanLive do
   attr :entry, :any, required: true
   attr :form, :any, required: true
   attr :kitchen, :list, required: true
+  attr :fixes, :list, default: []
 
   defp dish_card(assigns) do
     assigns = assign(assigns, :dish, assigns.entry.dish)
@@ -547,6 +669,21 @@ defmodule CookingSchedulerWeb.PlanLive do
           <.duration_input form={@form} field={:prep_minutes} label="Prep" />
           <.duration_input form={@form} field={:cook_minutes} label="Cook" />
           <.duration_input form={@form} field={:rest_minutes} label="Rest" />
+          <.mini
+            f={@form[:serve_offset_minutes]}
+            label="Serve"
+            type="select"
+            class="w-48"
+            options={serve_options(@dish.serve_offset_minutes)}
+          />
+          <.mini
+            :if={@dish.prep_minutes > 0}
+            f={@form[:prep_day]}
+            label="Prep"
+            type="select"
+            class="w-48"
+            options={MealDish.prep_day_options()}
+          />
           <span class="hidden h-8 w-px self-center bg-base-300 sm:mx-1 sm:block" aria-hidden="true"></span>
           <%= if @dish.method == :oven do %>
             <.mini
@@ -604,6 +741,18 @@ defmodule CookingSchedulerWeb.PlanLive do
           >
             <.icon name="hero-exclamation-triangle-micro" class="size-3.5 shrink-0" /> {issue}
           </span>
+          <span :if={@fixes != []} class="ml-1 text-xs text-base-content/60">Try:</span>
+          <button
+            :for={{fix, i} <- Enum.with_index(@fixes)}
+            type="button"
+            id={"fix-#{@dish.id}-#{i}"}
+            class="btn btn-xs btn-primary btn-soft rounded-full"
+            phx-click="apply_fix"
+            phx-value-dish={@dish.id}
+            phx-value-index={i}
+          >
+            <.icon name="hero-sparkles-micro" class="size-3" /> {fix.label}
+          </button>
         </div>
 
         <div
@@ -645,6 +794,9 @@ defmodule CookingSchedulerWeb.PlanLive do
   attr :saved, :list, required: true
   attr :query, :string, required: true
   attr :socket, Phoenix.LiveView.Socket, required: true
+  attr :other_meals, :list, required: true
+  attr :from_meal, :any, default: nil
+  attr :entries, :list, required: true
 
   # "Add a dish": pick one from the library, or create a new one with the New dish form
   # rendered inside the modal (see ADR 0017).
@@ -683,6 +835,7 @@ defmodule CookingSchedulerWeb.PlanLive do
             :for={
               {tab, id, label} <- [
                 {:pick, "add-tab-pick", "Your dishes (#{length(@saved)})"},
+                {:meal, "add-tab-meal", "From a meal"},
                 {:new, "add-tab-new", "New dish"}
               ]
             }
@@ -703,6 +856,64 @@ defmodule CookingSchedulerWeb.PlanLive do
         </div>
 
         <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4">
+          <%= if @tab == :meal do %>
+            <form id="from-meal-form" phx-change="pick_from_meal" class="mb-3">
+              <select name="meal" class="select select-sm w-full" aria-label="Meal to copy from">
+                <option value="">Choose a meal…</option>
+                <option
+                  :for={m <- @other_meals}
+                  value={m.id}
+                  selected={@from_meal && @from_meal.meal.id == m.id}
+                >
+                  {m.name} · {Calendar.strftime(m.date, "%d %b %Y")}
+                </option>
+              </select>
+            </form>
+            <p :if={@other_meals == []} class="text-sm text-base-content/60">No other meals yet.</p>
+            <ul :if={@from_meal} id="from-meal-dishes" class="grid gap-1.5">
+              <li :for={d <- @from_meal.dishes}>
+                <div class="flex w-full items-center gap-3 rounded-xl border border-base-300 bg-base-100/70 px-3 py-2">
+                  <span
+                    class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-200 text-base-content/70"
+                    title={method_label(d.method)}
+                  >
+                    <.icon name={method_icon(d.method)} class="size-4" />
+                  </span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate font-semibold">{d.name}</span>
+                    <span class="block truncate text-xs text-base-content/60">
+                      {Duration.format(d.cook_minutes)} cook<span :if={d.cook_done_at}>
+                        · cooked last time
+                      </span>
+                    </span>
+                  </span>
+                  <span
+                    :if={
+                      Enum.any?(@entries, &(String.downcase(&1.dish.name) == String.downcase(d.name)))
+                    }
+                    class="text-xs text-base-content/50"
+                  >
+                    Already in
+                  </span>
+                  <button
+                    :if={
+                      not Enum.any?(
+                        @entries,
+                        &(String.downcase(&1.dish.name) == String.downcase(d.name))
+                      )
+                    }
+                    type="button"
+                    id={"add-from-meal-#{d.id}"}
+                    phx-click="add_from_meal"
+                    phx-value-id={d.id}
+                    class="btn btn-xs btn-primary btn-soft rounded-full"
+                  >
+                    <.icon name="hero-plus-micro" class="size-3.5" /> Add
+                  </button>
+                </div>
+              </li>
+            </ul>
+          <% end %>
           <%= if @tab == :pick do %>
             <form id="saved-filter" phx-change="filter_saved" phx-submit="filter_saved" class="mb-3">
               <label class="input input-sm w-full">
@@ -766,7 +977,8 @@ defmodule CookingSchedulerWeb.PlanLive do
                 Create a new dish
               </button>
             </p>
-          <% else %>
+          <% end %>
+          <%= if @tab == :new do %>
             {live_render(@socket, CookingSchedulerWeb.DishFormLive,
               id: "new-dish-form",
               session: %{"meal_id" => @meal.id}
@@ -870,6 +1082,9 @@ defmodule CookingSchedulerWeb.PlanLive do
         saved={@saved}
         query={@saved_query}
         socket={@socket}
+        other_meals={@other_meals}
+        from_meal={@from_meal}
+        entries={@entries}
       />
 
       <div
@@ -897,16 +1112,45 @@ defmodule CookingSchedulerWeb.PlanLive do
         </div>
       </div>
 
-      <.kitchen_load :if={@load != []} load={@load} serve={@serve} />
+      <.kitchen_load :if={@load != []} load={@load} serve={@serve} events={@oven_events} />
 
-      <ul :if={@entries != []} id="dishes" class="mt-4 grid gap-2">
-        <.dish_card
-          :for={e <- Enum.sort_by(@entries, & &1.dish.id)}
-          entry={e}
-          form={card_form(e.dish, @invalid)}
-          kitchen={@kitchen}
-        />
-      </ul>
+      <div
+        :if={@problems != []}
+        id="problems"
+        class="pop-in mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-sm"
+      >
+        <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
+        <span class="font-semibold">
+          {length(@problems)} {if length(@problems) == 1, do: "dish needs", else: "dishes need"} a hand
+        </span>
+        <span class="text-base-content/70">
+          {Enum.map_join(@problems, ", ", & &1.dish.name)}
+        </span>
+        <a href={"#dish-card-#{hd(@problems).dish.id}"} class="link link-hover ml-auto text-primary">
+          Show me
+        </a>
+      </div>
+
+      <div :if={@entries != []} id="dishes" class="mt-4 grid gap-2">
+        <%= for section <- @sections do %>
+          <h3
+            id={"part-#{section.label |> String.downcase() |> String.replace(~r/[^a-z]+/, "-")}"}
+            class="mt-3 flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-base-content/50 first:mt-0"
+          >
+            {section.label}
+            <span class="h-px flex-1 bg-base-300"></span>
+          </h3>
+          <ul class="grid gap-2">
+            <.dish_card
+              :for={e <- section.entries}
+              entry={e}
+              form={card_form(e.dish, @invalid)}
+              kitchen={@kitchen}
+              fixes={Map.get(@fixes, e.dish.id, [])}
+            />
+          </ul>
+        <% end %>
+      </div>
     </Layouts.app>
     """
   end

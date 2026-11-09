@@ -233,4 +233,133 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     assert has_element?(lv, "#kitchen-load")
     assert has_element?(lv, ~s|#kitchen-load [id^="load-"]|)
   end
+
+  describe "courses and the run sheet" do
+    setup %{meal: meal} do
+      {:ok, main} =
+        Meals.create_meal_dish(meal, %{
+          name: "Beef",
+          method: :oven,
+          temp: 6,
+          temp_unit: :gas_mark,
+          prep_minutes: 30,
+          cook_minutes: 90,
+          rest_minutes: 30
+        })
+
+      {:ok, pudding} =
+        Meals.create_meal_dish(meal, %{
+          name: "Crumble",
+          method: :oven,
+          temp: 6,
+          temp_unit: :gas_mark,
+          cook_minutes: 40,
+          serve_offset_minutes: 60
+        })
+
+      %{main: main, pudding: pudding}
+    end
+
+    test "a dish can be moved to another course and shows it", %{
+      conn: conn,
+      path: path,
+      pudding: p
+    } do
+      {:ok, lv, _} = live(conn, path)
+      assert has_element?(lv, "#dish-card-#{p.id}", "Pudding")
+
+      lv
+      |> form("#dish-#{p.id}-form", meal_dish: %{serve_offset_minutes: "-45"})
+      |> render_change()
+
+      assert Meals.get_meal_dish!(p.id).serve_offset_minutes == -45
+      assert has_element?(lv, "#dish-card-#{p.id}", "Starter")
+    end
+
+    test "rows are in the order you start them, under parts of the day", %{
+      conn: conn,
+      path: path,
+      main: m,
+      pudding: p
+    } do
+      {:ok, _lv, html} = live(conn, path)
+      assert html =~ ~r/part-morning.*dish-card-#{m.id}.*part-afternoon.*dish-card-#{p.id}/s
+    end
+
+    test "oven events are listed under the kitchen load", %{conn: conn, path: path, left: left} do
+      {:ok, lv, _} = live(conn, path)
+      assert has_element?(lv, "#oven-events", "Switch on #{left.name}")
+      assert has_element?(lv, "#oven-events", "gas 6")
+    end
+
+    test "prep timing can be set for dishes with prep", %{
+      conn: conn,
+      path: path,
+      main: m,
+      pudding: p
+    } do
+      {:ok, lv, _} = live(conn, path)
+      assert has_element?(lv, "#dish-#{m.id}_prep_day")
+      refute has_element?(lv, "#dish-#{p.id}_prep_day")
+
+      lv |> form("#dish-#{m.id}-form", meal_dish: %{prep_day: "day_before"}) |> render_change()
+      assert Meals.get_meal_dish!(m.id).prep_day == :day_before
+    end
+  end
+
+  test "problems are summarised and come with fixes that work", %{
+    conn: conn,
+    meal: meal,
+    path: path,
+    left: left
+  } do
+    for a <- Kitchen.list_appliances(), a.kind == :oven, a.id != left.id do
+      {:ok, _} = Kitchen.delete_appliance(a)
+    end
+
+    for {name, temp} <- [{"Low", 4}, {"High", 8}] do
+      {:ok, _} =
+        Meals.create_meal_dish(meal, %{
+          name: name,
+          method: :oven,
+          temp: temp,
+          temp_unit: :gas_mark,
+          cook_minutes: 60
+        })
+    end
+
+    {:ok, lv, _} = live(conn, path)
+    assert has_element?(lv, "#problems", "1 dish needs a hand")
+    [bad] = Enum.filter(Meals.list_meal_dishes(meal), &(&1.name == "High"))
+    assert has_element?(lv, "#fix-#{bad.id}-0", "Rest")
+
+    lv |> element("#fix-#{bad.id}-0") |> render_click()
+    refute has_element?(lv, "#problems")
+  end
+
+  test "dishes can be cherry-picked from another meal", %{conn: conn, meal: meal, path: path} do
+    {:ok, old} = Meals.create_meal(%{name: "Christmas 2025"})
+
+    {:ok, spuds} =
+      Meals.create_meal_dish(old, %{
+        name: "Roasties",
+        method: :oven,
+        temp: 7,
+        temp_unit: :gas_mark,
+        cook_minutes: 60
+      })
+
+    {:ok, _} = Meals.add_ingredient(spuds, "Potatoes", 2, :kg)
+
+    {:ok, lv, _} = live(conn, path)
+    lv |> element("#add-dish") |> render_click()
+    lv |> element("#add-tab-meal") |> render_click()
+    lv |> form("#from-meal-form", meal: old.id) |> render_change()
+    lv |> element("#add-from-meal-#{spuds.id}") |> render_click()
+
+    [copy] = Meals.list_meal_dishes(meal)
+    assert copy.name == "Roasties"
+    assert [%{ingredient: %{name: "Potatoes"}}] = Meals.list_dish_ingredients(copy)
+    assert has_element?(lv, "#from-meal-dishes", "Already in")
+  end
 end
