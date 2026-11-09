@@ -234,7 +234,7 @@ defmodule CookingSchedulerWeb.DishLive do
                   id={@dish_form[:name].id}
                   name={@dish_form[:name].name}
                   value={@dish_form[:name].value}
-                  aria-label="MealDish name"
+                  aria-label="Dish name"
                   phx-debounce="400"
                   readonly={not @editing}
                   class={[

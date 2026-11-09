@@ -1,10 +1,11 @@
 defmodule CookingScheduler.UnitConversion do
   @moduledoc """
-  Pure kitchen unit conversion for temperature, weight and volume.
+  Pure kitchen unit conversion for temperature, weight and volume. **Every conversion in the
+  app goes through here**, so ovens, dishes and (one day) shopping lists always agree.
 
-  Units may be given as atoms (`:tbsp`) or as the ways people write them
-  (`"Tbsp"`, `"tablespoons"`, `"°F"`, `"fl oz"`). Volumes are US customary
-  (1 cup = 236.588 ml). Conversions only work within a category.
+  Units may be given as atoms (`:tbsp`, or the kitchen's `:celsius` / `:fahrenheit`) or as
+  the ways people write them (`"Tbsp"`, `"tablespoons"`, `"°F"`, `"fl oz"`). Volumes are
+  US customary (1 cup = 236.588 ml). Conversions only work within a category.
 
       iex> CookingScheduler.UnitConversion.convert(350, :f, :c, round: 0)
       {:ok, 177.0}
@@ -59,11 +60,12 @@ defmodule CookingScheduler.UnitConversion do
 
   @temperatures [:c, :f, :gas_mark]
 
-  # UK gas marks and their usual Celsius equivalents. Gas mark is a stepped
-  # scale, so converting *to* it picks the nearest mark.
+  # UK gas marks and their usual Celsius equivalents. Converting *from* a mark interpolates
+  # between neighbours (4½ is halfway from 4 to 5); converting *to* one picks the nearest mark,
+  # as the dial is stepped.
   @gas_marks [
     {0.25, 110},
-    {0.5, 130},
+    {0.5, 120},
     {1, 140},
     {2, 150},
     {3, 170},
@@ -234,10 +236,10 @@ defmodule CookingScheduler.UnitConversion do
     end
   end
 
-  @doc "Normalises a unit atom or free-text name to its canonical atom."
-  @spec parse_unit(unit | String.t()) :: {:ok, unit} | {:error, :unknown_unit}
+  @doc "Normalises a unit atom (canonical or an alias such as `:celsius`) or free-text name to its canonical atom."
+  @spec parse_unit(unit | atom | String.t()) :: {:ok, unit} | {:error, :unknown_unit}
   def parse_unit(unit) when is_atom(unit) and not is_nil(unit) do
-    if category(unit), do: {:ok, unit}, else: {:error, :unknown_unit}
+    if category(unit), do: {:ok, unit}, else: parse_unit(Atom.to_string(unit))
   end
 
   def parse_unit(text) when is_binary(text) do
@@ -312,9 +314,18 @@ defmodule CookingScheduler.UnitConversion do
   defp to_celsius(v, :f), do: {:ok, (v - 32) * 5 / 9}
 
   defp to_celsius(v, :gas_mark) do
-    case List.keyfind(@gas_marks, v, 0) do
-      {_, celsius} -> {:ok, celsius * 1.0}
-      nil -> {:error, :invalid_value}
+    {lowest, _} = hd(@gas_marks)
+    {highest, _} = List.last(@gas_marks)
+
+    if v < lowest or v > highest do
+      {:error, :invalid_value}
+    else
+      {lo_mark, lo_c} = @gas_marks |> Enum.filter(fn {mark, _} -> mark <= v end) |> List.last()
+
+      case Enum.find(@gas_marks, fn {mark, _} -> mark > v end) do
+        nil -> {:ok, lo_c * 1.0}
+        {hi_mark, hi_c} -> {:ok, lo_c + (hi_c - lo_c) * (v - lo_mark) / (hi_mark - lo_mark)}
+      end
     end
   end
 

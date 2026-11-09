@@ -9,8 +9,14 @@ defmodule CookingSchedulerWeb.CookLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    if connected?(socket), do: Process.send_after(self(), :tick, @tick_ms)
-    {:ok, socket |> load(Meals.get_meal!(id))}
+    meal = Meals.get_meal!(id)
+
+    if connected?(socket) do
+      Process.send_after(self(), :tick, @tick_ms)
+      Meals.subscribe(meal)
+    end
+
+    {:ok, load(socket, meal)}
   end
 
   # Reads the meal and its progress from the database and derives everything shown.
@@ -56,6 +62,9 @@ defmodule CookingSchedulerWeb.CookLive do
     Process.send_after(self(), :tick, @tick_ms)
     {:noreply, derive(socket, Clock.now_minutes())}
   end
+
+  # A tap on another device (or the plan changing elsewhere).
+  def handle_info({:meal_updated, _id}, socket), do: {:noreply, load(socket)}
 
   @impl true
   def handle_event("complete", %{"dish" => id, "kind" => kind}, socket) do

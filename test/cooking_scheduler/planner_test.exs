@@ -7,6 +7,15 @@ defmodule CookingScheduler.PlannerTest do
 
   @serve 13 * 60 + 30
 
+  test "an oven dish pointing at something that isn't an oven is placed like an unpinned one" do
+    grill = %Appliance{id: 9, kind: :other, name: "Grill"}
+    [entry] = Planner.plan([dish(1, appliance_id: 9)], @serve, [oven(1, "Oven"), grill])
+
+    assert entry.resource.id == 1
+    assert entry.source == :suggested
+    assert entry.issues == []
+  end
+
   defp oven(id, name, unit \\ :gas_mark, min \\ 0.25, max \\ 9.0),
     do: %Appliance{id: id, kind: :oven, name: name, temp_unit: unit, min_temp: min, max_temp: max}
 
@@ -153,10 +162,11 @@ defmodule CookingScheduler.PlannerTest do
   end
 
   test "gas mark / celsius conversion" do
-    assert Appliance.to_celsius(4, :gas_mark) == 180.0
-    assert Appliance.to_celsius(7, :gas_mark) == 220.0
-    assert_in_delta Appliance.to_celsius(4.5, :gas_mark), 185.0, 0.001
-    assert_in_delta Appliance.to_celsius(350, :fahrenheit), 176.67, 0.01
+    # Ovens and dishes compare through UnitConversion, in the kitchen's own unit names.
+    assert Appliance.range_celsius(oven(1, "Gas", :gas_mark, 0.25, 7.0)) == {110.0, 220.0}
+    assert {lo, hi} = Appliance.range_celsius(oven(1, "F", :fahrenheit, nil, 350.0))
+    assert lo == 0.0
+    assert_in_delta hi, 176.67, 0.01
   end
 
   describe "load/2" do

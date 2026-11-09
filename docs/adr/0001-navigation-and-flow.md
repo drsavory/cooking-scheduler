@@ -76,7 +76,7 @@ Log in and land directly on the **home page**. There is no other entry point.
 - The library auto-updates from edits to a meal's dishes only until that meal has been
   started; after that the meal is a historical record.
 - Not done: the plan view is still per-dish cards, not the table-like layout above.
-- Not done: login. There is no auth yet, so "log in" currently means opening the app.
+- Login is one shared password for the whole site (ADR 0015); there are no user accounts.
 
 ## Open questions
 

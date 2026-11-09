@@ -1,6 +1,10 @@
 defmodule CookingScheduler.Meals do
   @moduledoc """
-  Meals (e.g. "Christmas 2025"), the dishes in each one, and the dishes you can choose from  dishes they're copied from.
+  Meals (e.g. "Christmas 2025"), the dishes in each one, and the library of dishes they are
+  copied from.
+
+  Any change to a meal or its dishes is broadcast on that meal's topic (see `subscribe/1`), so
+  every screen open on the meal, on any device, can reload.
   """
 
   import Ecto.Query
@@ -17,6 +21,31 @@ defmodule CookingScheduler.Meals do
   }
 
   @default_serve ~T[13:30:00]
+  @pubsub CookingScheduler.PubSub
+
+  # ---- change notifications ---------------------------------------------------
+
+  @doc """
+  Subscribes the current process to a meal: it then receives `{:meal_updated, meal_id}` after
+  any change made by *another* process to the meal, its dishes, their ingredients, progress or
+  shopping ticks. The process that made the change is not told (it already knows).
+  """
+  def subscribe(%Meal{id: id}), do: subscribe(id)
+  def subscribe(meal_id), do: Phoenix.PubSub.subscribe(@pubsub, topic(meal_id))
+
+  defp topic(meal_id), do: "meal:#{meal_id}"
+
+  defp changed(meal_id) when is_integer(meal_id) do
+    Phoenix.PubSub.broadcast_from(@pubsub, self(), topic(meal_id), {:meal_updated, meal_id})
+  end
+
+  # Broadcasts after a successful write and passes the result through.
+  defp changed({:ok, _} = result, meal_id) do
+    changed(meal_id)
+    result
+  end
+
+  defp changed(result, _meal_id), do: result
 
   # ---- meals ----------------------------------------------------------------
 
@@ -63,7 +92,9 @@ defmodule CookingScheduler.Meals do
   end
 
   def change_meal(%Meal{} = meal, attrs \\ %{}), do: Meal.changeset(meal, attrs)
-  def update_meal(%Meal{} = meal, attrs), do: meal |> Meal.changeset(attrs) |> Repo.update()
+
+  def update_meal(%Meal{} = meal, attrs),
+    do: meal |> Meal.changeset(attrs) |> Repo.update() |> changed(meal.id)
 
   def delete_meal(%Meal{} = meal) do
     keys = Photos.keys_for_meal(meal)
@@ -109,6 +140,7 @@ defmodule CookingScheduler.Meals do
       copy_ingredients({:meal_dish, dish.id}, {:meal_dish, copy.id})
     end
 
+    changed(target.id)
     :ok
   end
 
@@ -140,17 +172,18 @@ defmodule CookingScheduler.Meals do
     |> MealDish.changeset(attrs)
     |> Repo.insert()
     |> sync_after()
+    |> changed(meal.id)
   end
 
   def update_meal_dish(%MealDish{} = dish, attrs) do
-    dish |> MealDish.changeset(attrs) |> Repo.update() |> sync_after()
+    dish |> MealDish.changeset(attrs) |> Repo.update() |> sync_after() |> changed(dish.meal_id)
   end
 
   def delete_meal_dish(%MealDish{} = dish) do
     keys = Photos.keys_for_meal_dish(dish)
     result = Repo.delete(dish)
     with {:ok, _} <- result, do: Photos.purge(keys)
-    result
+    changed(result, dish.meal_id)
   end
 
   @doc "Adds a dish with sensible defaults for how it's cooked, ready to edit in place."
@@ -190,14 +223,15 @@ defmodule CookingScheduler.Meals do
   # ---- live cooking progress (times are minutes after midnight) --------------
 
   def set_prepped(%MealDish{} = d, value),
-    do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update()
+    do: d |> Ecto.Changeset.change(prepped: value) |> Repo.update() |> changed(d.meal_id)
 
   def set_ingredients_in(%MealDish{} = d, value),
-    do: d |> Ecto.Changeset.change(ingredients_in: value) |> Repo.update()
+    do: d |> Ecto.Changeset.change(ingredients_in: value) |> Repo.update() |> changed(d.meal_id)
 
   @doc "Ticks (or unticks) \"all ingredients in\" for every dish in a meal."
   def set_all_ingredients_in(%Meal{id: id}, value) do
     Repo.update_all(from(d in MealDish, where: d.meal_id == ^id), set: [ingredients_in: value])
+    changed(id)
     :ok
   end
 
@@ -216,6 +250,7 @@ defmodule CookingScheduler.Meals do
   defp update_progress(changeset) do
     with {:ok, dish} <- Repo.update(changeset) do
       sync_status(dish.meal_id)
+      changed(dish.meal_id)
       {:ok, dish}
     end
   end
@@ -223,7 +258,7 @@ defmodule CookingScheduler.Meals do
   @doc "Moves a planning meal on to prepping (or back again)."
   def set_prep_status(%Meal{status: status} = meal, new)
       when status in [:planning, :prepping] and new in [:planning, :prepping],
-      do: meal |> Ecto.Changeset.change(status: new) |> Repo.update()
+      do: meal |> Ecto.Changeset.change(status: new) |> Repo.update() |> changed(meal.id)
 
   # Keeps cooking/complete in step with dish progress. Planning/prepping are the cook's call,
   # so they're only touched when progress is undone (back to prepping).
@@ -233,15 +268,25 @@ defmodule CookingScheduler.Meals do
     timed = Enum.filter(dishes, &(&1.cook_minutes > 0))
     started? = Enum.any?(timed, &(&1.cook_started_at || &1.cook_done_at))
 
-    new =
+    changes =
       cond do
-        not started? and meal.status in [:cooking, :complete] -> :prepping
-        not started? -> meal.status
-        meal.finished_at || Enum.all?(timed, & &1.cook_done_at) -> :complete
-        true -> :cooking
+        # Back to prepping also forgets an early finish, or the next start would jump straight
+        # to complete again.
+        not started? and meal.status in [:cooking, :complete] ->
+          %{status: :prepping, finished_at: nil}
+
+        not started? ->
+          %{}
+
+        meal.finished_at || Enum.all?(timed, & &1.cook_done_at) ->
+          %{status: :complete}
+
+        true ->
+          %{status: :cooking}
       end
 
-    if new != meal.status, do: meal |> Ecto.Changeset.change(status: new) |> Repo.update()
+    changeset = Ecto.Changeset.change(meal, changes)
+    if changeset.changes != %{}, do: Repo.update!(changeset)
     :ok
   end
 
@@ -250,12 +295,14 @@ defmodule CookingScheduler.Meals do
       d
       |> Ecto.Changeset.change(extra_minutes: max(d.extra_minutes + minutes, 0))
       |> Repo.update()
+      |> changed(d.meal_id)
 
   @doc "Ends the meal now, even if some dishes weren't cooked. Undo with `reset_cooking/1`."
   def finish_meal(%Meal{} = meal) do
     meal
     |> Ecto.Changeset.change(finished_at: DateTime.utc_now(:second), status: :complete)
     |> Repo.update()
+    |> changed(meal.id)
   end
 
   @doc """
@@ -271,6 +318,7 @@ defmodule CookingScheduler.Meals do
       set: [finished_at: nil, status: :prepping]
     )
 
+    changed(id)
     :ok
   end
 
@@ -345,6 +393,7 @@ defmodule CookingScheduler.Meals do
            |> MealDish.changeset(attrs)
            |> Repo.insert() do
       copy_ingredients({:dish, dish.id}, {:meal_dish, meal_dish.id})
+      changed(meal.id)
       {:ok, meal_dish}
     end
   end
@@ -457,6 +506,8 @@ defmodule CookingScheduler.Meals do
     )
 
     sync_ingredients_in(meal, ingredient_id)
+    changed(id)
+    :ok
   end
 
   def set_bought(%Meal{id: id} = meal, ingredient_id, false) do
@@ -465,12 +516,16 @@ defmodule CookingScheduler.Meals do
     )
 
     sync_ingredients_in(meal, ingredient_id)
+    changed(id)
+    :ok
   end
 
   @doc "Unticks everything on a meal's shopping list (and the dishes that had it all in)."
   def clear_bought(%Meal{id: id} = meal) do
     Repo.delete_all(from c in ShoppingCheck, where: c.meal_id == ^id)
     sync_ingredients_in(meal, nil)
+    changed(id)
+    :ok
   end
 
   # Re-derives "all ingredients in" for the meal's dishes that use `ingredient_id` (or any
@@ -542,10 +597,14 @@ defmodule CookingScheduler.Meals do
 
       with {:ok, di} <- result do
         sync_ingredients_to_library(dish)
+        notify_owner(dish)
         {:ok, di}
       end
     end
   end
+
+  defp notify_owner(%MealDish{meal_id: meal_id}), do: changed(meal_id)
+  defp notify_owner(%Dish{}), do: :ok
 
   defp parse_amount(amount) do
     case DishIngredient.parse_amount(amount) do
@@ -556,9 +615,11 @@ defmodule CookingScheduler.Meals do
 
   @doc "Takes an ingredient off a dish. The ingredient stays in the shared list."
   def remove_ingredient(dish, %DishIngredient{} = di) do
-    result = Repo.delete(di)
-    sync_ingredients_to_library(dish)
-    result
+    with {:ok, _} = result <- Repo.delete(di) do
+      sync_ingredients_to_library(dish)
+      notify_owner(dish)
+      result
+    end
   end
 
   defp find_or_create_ingredient(name) do
@@ -634,14 +695,15 @@ defmodule CookingScheduler.Meals do
         from d in MealDish,
           join: m in assoc(d, :meal),
           where: d.dish_id == ^id and m.status in [:planning, :prepping],
-          select: d.id
+          select: {d.id, d.meal_id}
       )
 
-    for meal_dish_id <- targets do
+    for {meal_dish_id, _} <- targets do
       Repo.delete_all(owner_query({:meal_dish, meal_dish_id}))
       copy_ingredients({:dish, id}, {:meal_dish, meal_dish_id})
     end
 
+    targets |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> Enum.each(&changed/1)
     :ok
   end
 end

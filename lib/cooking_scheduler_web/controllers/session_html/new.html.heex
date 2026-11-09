@@ -1,0 +1,29 @@
+<div class="aurora" aria-hidden="true">
+  <div class="aurora-blob aurora-a"></div>
+  <div class="aurora-blob aurora-b"></div>
+  <div class="aurora-blob aurora-c"></div>
+</div>
+<main class="relative mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10">
+  <div class="glass pop-in rounded-[1.75rem] p-8">
+    <span class="grid size-12 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30">
+      <.icon name="hero-fire-solid" class="size-6" />
+    </span>
+    <h1 class="mt-5 text-3xl font-extrabold tracking-tight">Cooking Scheduler</h1>
+    <p class="mt-1 text-base-content/60">Enter the kitchen password to carry on.</p>
+
+    <.form for={@form} id="login-form" action={~p"/login"} method="post" class="mt-6">
+      <.input
+        field={@form[:password]}
+        type="password"
+        label="Password"
+        autocomplete="current-password"
+        autofocus
+        required
+      />
+      <p :if={@error} id="login-error" class="-mt-1 mb-3 text-sm text-error">{@error}</p>
+      <button id="log-in" type="submit" class="btn btn-glow w-full rounded-full">
+        <.icon name="hero-lock-open" class="size-4" /> Let me in
+      </button>
+    </.form>
+  </div>
+</main>

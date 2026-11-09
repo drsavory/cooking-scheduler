@@ -19,4 +19,16 @@ defmodule CookingScheduler.RecipeLinkTest do
     assert RecipeLink.host("") == nil
     assert RecipeLink.host("see mum's recipe book") == nil
   end
+
+  test "web addresses and plain text are fine in a link, other schemes are not" do
+    for ok <- ["https://x.com/r", "HTTP://x.com", "x.com/recipe", "see mum's recipe book", ""] do
+      assert RecipeLink.web?(ok), ok
+    end
+
+    for bad <- ["javascript:alert(1)", "JavaScript:x", " java\tscript:x", "data:text/html,hi"] do
+      refute RecipeLink.web?(bad), bad
+    end
+
+    refute RecipeLink.web?(nil)
+  end
 end

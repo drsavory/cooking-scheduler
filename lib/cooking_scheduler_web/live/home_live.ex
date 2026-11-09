@@ -73,7 +73,7 @@ defmodule CookingSchedulerWeb.HomeLive do
     {:noreply, load_meals(socket)}
   end
 
-  def handle_event("delete_meal_dish", %{"id" => id}, socket) do
+  def handle_event("delete_dish", %{"id" => id}, socket) do
     {:ok, _} = id |> Meals.get_dish!() |> Meals.delete_dish()
     {:noreply, load_meals(socket)}
   end
@@ -419,7 +419,7 @@ defmodule CookingSchedulerWeb.HomeLive do
               message="Meals that already use it keep their copy."
               confirm_label="Delete"
               tone={:danger}
-              on_confirm={JS.push("delete_meal_dish", value: %{id: d.id})}
+              on_confirm={JS.push("delete_dish", value: %{id: d.id})}
               class="relative z-10 btn btn-xs btn-circle btn-ghost opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-error focus:opacity-100"
               aria-label={"Delete #{d.name}"}
             >

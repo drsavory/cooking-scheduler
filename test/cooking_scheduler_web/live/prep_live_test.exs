@@ -29,6 +29,21 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     %{meal: meal, with_prep: with_prep, no_prep: no_prep}
   end
 
+  test "ticks made on the shopping list show up on an open prep screen", %{
+    conn: conn,
+    meal: meal,
+    with_prep: with_prep
+  } do
+    {:ok, prep, _} = live(conn, ~p"/meals/#{meal.id}/prep")
+    {:ok, shop, _} = live(Phoenix.ConnTest.build_conn(), ~p"/meals/#{meal.id}/shopping")
+    [%{ingredient: potatoes}] = Meals.shopping_list(meal)
+
+    refute has_element?(prep, "#tick-ingredients-#{with_prep.id}[aria-checked=true]")
+    shop |> element("#tick-shopping-#{potatoes.id}") |> render_click()
+    assert has_element?(prep, "#tick-ingredients-#{with_prep.id}[aria-checked=true]")
+    assert has_element?(prep, "#shopping-summary", "1 of 1 bought")
+  end
+
   test "planning meals offer to start prepping", %{conn: conn, meal: meal} do
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
     assert has_element?(lv, "#not-prepping")

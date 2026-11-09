@@ -161,9 +161,16 @@ defmodule CookingSchedulerWeb.CookLiveTest do
              Meals.get_meal_dish!(turkey.id)
   end
 
-  test "everything done shows the finish message", %{conn: conn} do
+  test "progress made on one device shows on every open cook screen", %{
+    conn: conn,
+    turkey: turkey
+  } do
     set_clock(7, 0)
-    {:ok, lv, _} = live(conn, cook_path())
+    {:ok, phone, _} = live(conn, cook_path())
+    {:ok, tablet, _} = live(Phoenix.ConnTest.build_conn(), cook_path())
+
+    phone |> element("#task-#{turkey.id}-prep button") |> render_click()
+    assert has_element?(tablet, "#done-#{turkey.id}-prep")
 
     for d <- dishes() do
       Meals.set_prepped(d, true)
@@ -171,9 +178,8 @@ defmodule CookingSchedulerWeb.CookLiveTest do
       Meals.finish_cooking(Meals.get_meal_dish!(d.id), 9 * 60)
     end
 
-    {:ok, lv2, _} = live(Phoenix.ConnTest.build_conn(), cook_path())
-    assert has_element?(lv2, "#all-done")
-    refute has_element?(lv, "#all-done")
+    assert has_element?(phone, "#all-done")
+    assert has_element?(tablet, "#all-done")
   end
 
   test "an empty meal points you to the dishes screen", %{conn: conn} do

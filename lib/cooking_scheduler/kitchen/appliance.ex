@@ -2,6 +2,8 @@ defmodule CookingScheduler.Kitchen.Appliance do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias CookingScheduler.UnitConversion
+
   @kinds ~w(oven ring other)a
   @temp_units ~w(celsius fahrenheit gas_mark)a
   @ring_sizes ~w(small medium large)a
@@ -40,39 +42,18 @@ defmodule CookingScheduler.Kitchen.Appliance do
   def fmt_temp(n, _unit) when is_float(n) and n == trunc(n), do: Integer.to_string(trunc(n))
   def fmt_temp(n, _unit), do: to_string(n)
 
-  # Standard gas mark -> °C table; fractions in between are interpolated.
-  @gas_marks [
-    {0.25, 110},
-    {0.5, 120},
-    {1, 140},
-    {2, 150},
-    {3, 170},
-    {4, 180},
-    {5, 190},
-    {6, 200},
-    {7, 220},
-    {8, 230},
-    {9, 240},
-    {10, 260}
-  ]
-
-  @doc "Converts a setting on any scale to degrees Celsius so ovens and dishes can be compared."
-  def to_celsius(temp, :celsius), do: temp * 1.0
-  def to_celsius(temp, :fahrenheit), do: (temp - 32) * 5 / 9
-
-  def to_celsius(temp, :gas_mark) do
-    {lo_gm, lo_c} =
-      @gas_marks |> Enum.take_while(fn {gm, _} -> gm <= temp end) |> List.last() || hd(@gas_marks)
-
-    case Enum.find(@gas_marks, fn {gm, _} -> gm > temp end) do
-      nil -> lo_c * 1.0
-      {hi_gm, hi_c} -> lo_c + (hi_c - lo_c) * (temp - lo_gm) / (hi_gm - lo_gm)
-    end
-  end
-
-  @doc "An oven's {lowest, highest} setting in °C."
+  @doc """
+  An oven's {lowest, highest} setting in °C (via `UnitConversion`), so ovens and dishes can be
+  compared. No lowest setting, or one below the scale, means no lower limit.
+  """
   def range_celsius(%__MODULE__{} = oven) do
-    {to_celsius(oven.min_temp || 0.0, oven.temp_unit), to_celsius(oven.max_temp, oven.temp_unit)}
+    lo =
+      case oven.min_temp && UnitConversion.convert(oven.min_temp, oven.temp_unit, :c) do
+        {:ok, celsius} -> celsius
+        _ -> 0.0
+      end
+
+    {lo, UnitConversion.convert!(oven.max_temp, oven.temp_unit, :c)}
   end
 
   @doc "Top of the scale used when drawing a temperature range bar."
@@ -129,11 +110,14 @@ defmodule CookingScheduler.Kitchen.Appliance do
     end
   end
 
+  # The dial runs from ¼ to 10; anything else can't be converted.
   defp validate_gas_mark(changeset) do
     if get_field(changeset, :temp_unit) == :gas_mark do
-      validate_number(changeset, :max_temp,
+      changeset
+      |> validate_number(:max_temp,
+        greater_than_or_equal_to: 0.25,
         less_than_or_equal_to: 10,
-        message: "gas marks only go up to 10"
+        message: "gas marks go from ¼ to 10"
       )
     else
       changeset

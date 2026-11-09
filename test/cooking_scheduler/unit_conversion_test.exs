@@ -9,13 +9,22 @@ defmodule CookingScheduler.UnitConversionTest do
     assert U.convert(180, :c, :f) == {:ok, 356.0}
     assert U.convert(4, :gas_mark, :c) == {:ok, 180.0}
     assert U.convert(4, "gas mark", :f, round: 0) == {:ok, 356.0}
-    assert U.convert(0.5, "gas", :c) == {:ok, 130.0}
+    assert U.convert(0.5, "gas", :c) == {:ok, 120.0}
+    assert U.convert(4.5, :gas_mark, :c) == {:ok, 185.0}
+    assert U.convert(0.1, :gas_mark, :c) == {:error, :invalid_value}
     assert U.convert(350, :f, "gas mark") == {:ok, 4.0}
     assert U.convert(200, :c, :gas_mark) == {:ok, 6.0}
     assert U.convert(100, :c, :gas_mark) == {:ok, 0.25}
     assert U.convert(50, :c, :gas_mark) == {:error, :out_of_range}
     assert U.convert(11, :gas_mark, :c) == {:error, :invalid_value}
     assert U.convert(212, "°F", "celsius") == {:ok, 100.0}
+  end
+
+  test "the kitchen's own unit atoms work too" do
+    assert U.convert(180, :celsius, :fahrenheit) == {:ok, 356.0}
+    assert U.convert(350, :fahrenheit, :c, round: 1) == {:ok, 176.7}
+    assert U.parse_unit(:celsius) == {:ok, :c}
+    assert U.parse_unit(:bogus) == {:error, :unknown_unit}
   end
 
   test "weights" do

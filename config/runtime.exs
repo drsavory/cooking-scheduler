@@ -23,6 +23,14 @@ end
 config :cooking_scheduler, CookingSchedulerWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# One shared password for the whole site (ADR 0015). Optional in development, required in
+# production, ignored in tests (they set it themselves).
+site_password = if config_env() != :test, do: System.get_env("SITE_PASSWORD")
+
+if site_password do
+  config :cooking_scheduler, site_password: site_password
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :cooking_scheduler, CookingSchedulerWeb.Endpoint,
@@ -71,6 +79,20 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
+
+  System.get_env("SITE_PASSWORD") ||
+    raise """
+    environment variable SITE_PASSWORD is missing.
+    Everything on the site is behind this one password; pick a long one.
+    """
+
+  # The cook screen works in the kitchen's local time, which comes from the OS clock's zone.
+  # Without this a container runs in UTC and the clock is wrong for half the year.
+  System.get_env("TZ") ||
+    raise """
+    environment variable TZ is missing.
+    Set it to the kitchen's time zone, for example: Europe/London
+    """
 
   config :cooking_scheduler, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 

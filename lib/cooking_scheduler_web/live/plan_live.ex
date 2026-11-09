@@ -6,7 +6,17 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    {:ok, socket |> assign(:invalid, %{}) |> load(Meals.get_meal!(id))}
+    meal = Meals.get_meal!(id)
+    if connected?(socket), do: Meals.subscribe(meal)
+
+    {:ok,
+     socket
+     |> assign(:invalid, %{})
+     |> assign(
+       :other_meals,
+       for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
+     )
+     |> load(meal)}
   end
 
   defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
@@ -22,10 +32,6 @@ defmodule CookingSchedulerWeb.PlanLive do
     |> assign(:meal_form, to_form(Meals.change_meal(meal), id: "meal"))
     |> assign_plan(dishes, Meal.serve_minutes(meal), kitchen)
     |> assign(:saved, Meals.dishes_not_in(meal))
-    |> assign(
-      :other_meals,
-      for(s <- Meals.list_meal_summaries(), s.meal.id != meal.id, s.dishes > 0, do: s.meal)
-    )
   end
 
   defp assign_plan(socket, dishes, serve, kitchen) do
@@ -58,8 +64,16 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   def handle_event("add_saved", %{"id" => id}, socket) do
-    {:ok, _} = Meals.add_dish_to_meal(socket.assigns.meal, Meals.get_dish!(id))
-    {:noreply, load(socket)}
+    dish = Meals.get_dish!(id)
+
+    case Meals.add_dish_to_meal(socket.assigns.meal, dish) do
+      {:ok, _} ->
+        {:noreply, load(socket)}
+
+      {:error, _changeset} ->
+        {:noreply,
+         put_flash(socket, :error, "#{dish.name} can't be added as it is: check its details")}
+    end
   end
 
   def handle_event("start_prepping", _params, socket) do
@@ -95,9 +109,14 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    {:ok, _} = id |> Meals.get_meal_dish!() |> Meals.delete_meal_dish()
-    {:noreply, socket |> update(:invalid, &Map.delete(&1, String.to_integer(id))) |> load()}
+    dish = Meals.get_meal_dish!(id)
+    {:ok, _} = Meals.delete_meal_dish(dish)
+    {:noreply, socket |> update(:invalid, &Map.delete(&1, dish.id)) |> load()}
   end
+
+  # Something changed on another device or screen.
+  @impl true
+  def handle_info({:meal_updated, _id}, socket), do: {:noreply, load(socket)}
 
   defp form_id(%MealDish{id: id}), do: "dish-#{id}"
 
@@ -468,15 +487,18 @@ defmodule CookingSchedulerWeb.PlanLive do
               >
                 <.icon name="hero-ellipsis-horizontal" class="size-4" />
               </button>
-              <button
-                type="button"
+              <.confirm_button
+                id={"delete-dish-#{@dish.id}"}
+                title={"Remove #{@dish.name} from this meal?"}
+                message="Its saved version stays in your dishes."
+                confirm_label="Remove"
+                tone={:danger}
+                on_confirm={JS.push("delete", value: %{id: @dish.id})}
                 class="btn btn-xs btn-circle btn-ghost hover:text-error"
-                phx-click="delete"
-                phx-value-id={@dish.id}
                 aria-label={"Remove #{@dish.name}"}
               >
                 <.icon name="hero-trash" class="size-4" />
-              </button>
+              </.confirm_button>
             </div>
 
             <.timeline entry={@entry} />

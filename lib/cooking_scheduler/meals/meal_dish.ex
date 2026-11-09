@@ -2,7 +2,7 @@ defmodule CookingScheduler.Meals.MealDish do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias CookingScheduler.Duration
+  alias CookingScheduler.{Duration, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
 
   @methods ~w(oven ring appliance)a
@@ -58,6 +58,7 @@ defmodule CookingScheduler.Meals.MealDish do
     |> cast(attrs, @fields)
     |> validate_required([:name, :method])
     |> validate_length(:name, max: 80)
+    |> RecipeLink.validate(:link)
     |> default_zero([:prep_minutes, :cook_minutes, :rest_minutes])
     |> validate_by_method()
   end
@@ -96,8 +97,9 @@ defmodule CookingScheduler.Meals.MealDish do
   defp validate_gas_mark(changeset) do
     if get_field(changeset, :temp_unit) == :gas_mark do
       validate_number(changeset, :temp,
+        greater_than_or_equal_to: 0.25,
         less_than_or_equal_to: 10,
-        message: "gas marks only go up to 10"
+        message: "gas marks go from ¼ to 10"
       )
     else
       changeset

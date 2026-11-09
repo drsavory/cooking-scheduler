@@ -103,8 +103,34 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     {:ok, lv, _} = live(conn, path)
     lv |> element(~s|#add-dish button[phx-value-method="appliance"]|) |> render_click()
     [dish] = dishes(meal)
-    lv |> element("#dish-card-#{dish.id} button[aria-label^=Remove]") |> render_click()
+    confirm_dialog(lv, "delete-dish-#{dish.id}")
     assert dishes(meal) == []
+  end
+
+  test "a saved dish that can't be copied is explained, not crashed on", %{conn: conn, path: path} do
+    # Saved before gas marks were capped, so it no longer passes a meal dish's checks.
+    CookingScheduler.Repo.insert!(%CookingScheduler.Meals.Dish{
+      name: "Inferno",
+      method: :oven,
+      temp: 12.0,
+      temp_unit: :gas_mark
+    })
+
+    {:ok, lv, _} = live(conn, path)
+    lv |> element("#saved-picker button", "Inferno") |> render_click()
+
+    assert has_element?(lv, "#flash-error", "Inferno can't be added")
+    assert has_element?(lv, "#saved-picker button", "Inferno")
+  end
+
+  test "changes made on another screen show up here", %{conn: conn, meal: meal, path: path} do
+    {:ok, lv, _} = live(conn, path)
+    {:ok, other, _} = live(Phoenix.ConnTest.build_conn(), path)
+
+    other |> element(~s|#add-dish button[phx-value-method="ring"]|) |> render_click()
+    [dish] = dishes(meal)
+
+    assert has_element?(lv, "#dish-card-#{dish.id}")
   end
 
   test "can copy the meal into a new, independent one", %{conn: conn, meal: meal, path: path} do

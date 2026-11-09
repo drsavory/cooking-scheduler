@@ -2,6 +2,7 @@ defmodule CookingScheduler.MealsTest do
   use CookingScheduler.DataCase
 
   alias CookingScheduler.Meals
+  alias CookingScheduler.Meals.Dish
 
   defp dish_attrs(overrides \\ %{}) do
     Map.merge(
@@ -184,6 +185,75 @@ defmodule CookingScheduler.MealsTest do
       {:ok, m} = Meals.update_meal(old, %{name: "Sunday lunch"})
       {:ok, copy} = Meals.create_meal_from(m)
       assert copy.name == "Sunday lunch (copy)"
+    end
+  end
+
+  describe "checks" do
+    test "a second dish with the same name, in any case, is refused rather than crashed on" do
+      {:ok, _} = Meals.create_dish(%{name: "Gravy", method: :ring, ring_size: :medium})
+
+      assert {:error, changeset} =
+               Meals.create_dish(%{name: "gravy", method: :ring, ring_size: :medium})
+
+      assert %{name: ["is already a dish"]} = errors_on(changeset)
+    end
+
+    test "saved dishes get the same gas mark cap as meal dishes, so they can always be added" do
+      assert {:error, changeset} =
+               Meals.create_dish(%{name: "Hot", method: :oven, temp: 11, temp_unit: :gas_mark})
+
+      assert %{temp: ["gas marks go from ¼ to 10"]} = errors_on(changeset)
+    end
+
+    test "recipe links can be web addresses or plain text, never scripts" do
+      base = %{name: "X", method: :ring, ring_size: :medium}
+
+      for link <- ["https://x.com/r", "x.com/r", "see mum's book", "", nil] do
+        assert Meals.change_dish(%Dish{}, Map.put(base, :link, link)).valid?, inspect(link)
+        assert Meals.change_meal_dish(%Meals.MealDish{}, Map.put(base, :link, link)).valid?
+      end
+
+      for link <- ["javascript:alert(1)", "data:text/html,hi"] do
+        assert %{link: [_]} = errors_on(Meals.change_dish(%Dish{}, Map.put(base, :link, link)))
+
+        assert %{link: [_]} =
+                 errors_on(Meals.change_meal_dish(%Meals.MealDish{}, Map.put(base, :link, link)))
+      end
+    end
+  end
+
+  describe "progress" do
+    test "undoing every start after an early finish forgets the finish too" do
+      m = meal("Now", ~D[2026-12-25])
+      {:ok, d} = Meals.create_meal_dish(m, dish_attrs())
+      {:ok, _} = Meals.start_cooking(d, 600)
+      {:ok, _} = Meals.finish_meal(Meals.get_meal!(m.id))
+      assert %{status: :complete, finished_at: %DateTime{}} = Meals.get_meal!(m.id)
+
+      {:ok, _} = Meals.undo_start(Meals.get_meal_dish!(d.id))
+      assert %{status: :prepping, finished_at: nil} = Meals.get_meal!(m.id)
+
+      {:ok, _} = Meals.start_cooking(Meals.get_meal_dish!(d.id), 610)
+      assert Meals.get_meal!(m.id).status == :cooking
+    end
+  end
+
+  describe "change notifications" do
+    test "other processes hear about a meal's changes; the one making them does not" do
+      m = meal("Now", ~D[2026-12-25])
+      other = meal("Other", ~D[2026-12-26])
+      {:ok, od} = Meals.create_meal_dish(other, dish_attrs(%{name: "Elsewhere"}))
+      :ok = Meals.subscribe(m)
+
+      {:ok, d} = Meals.create_meal_dish(m, dish_attrs())
+      refute_received {:meal_updated, _}
+
+      Task.await(Task.async(fn -> Meals.start_cooking(d, 600) end))
+      assert_receive {:meal_updated, id}
+      assert id == m.id
+
+      Task.await(Task.async(fn -> Meals.set_prepped(od, true) end))
+      refute_receive {:meal_updated, _}
     end
   end
 

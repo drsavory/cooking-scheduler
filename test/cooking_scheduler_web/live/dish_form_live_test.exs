@@ -20,6 +20,16 @@ defmodule CookingSchedulerWeb.DishFormLiveTest do
     assert_redirect(lv, ~p"/dishes/#{id}")
   end
 
+  test "refuses a name that is already a dish, in any case", %{conn: conn} do
+    {:ok, _} = Meals.create_dish(%{name: "Gravy", method: :ring, ring_size: :medium})
+    {:ok, lv, _} = live(conn, ~p"/dishes/new")
+
+    html = lv |> form("#dish-form", dish: %{name: "gravy", temp: "6"}) |> render_submit()
+
+    assert html =~ "is already a dish"
+    assert [%{name: "Gravy"}] = Meals.list_dishes()
+  end
+
   test "flags bad input and saves nothing", %{conn: conn} do
     {:ok, lv, _} = live(conn, ~p"/dishes/new")
 

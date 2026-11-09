@@ -5,6 +5,8 @@ defmodule CookingSchedulerWeb.Layouts do
   """
   use CookingSchedulerWeb, :html
 
+  alias CookingSchedulerWeb.Auth
+
   # Embed all files in layouts/* within this module.
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
@@ -64,6 +66,17 @@ defmodule CookingSchedulerWeb.Layouts do
               <kbd class="kbd kbd-xs hidden sm:inline-flex">/</kbd>
             </button>
             <.theme_toggle />
+            <.link
+              :if={Auth.enabled?()}
+              id="log-out"
+              href={~p"/logout"}
+              method="delete"
+              aria-label="Log out"
+              title="Log out"
+              class="btn btn-ghost btn-sm rounded-full"
+            >
+              <.icon name="hero-arrow-right-start-on-rectangle" class="size-4" />
+            </.link>
           </div>
         </div>
       </header>

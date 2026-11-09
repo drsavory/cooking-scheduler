@@ -1,6 +1,8 @@
 defmodule CookingSchedulerWeb.Router do
   use CookingSchedulerWeb, :router
 
+  import CookingSchedulerWeb.Auth, only: [require_password: 2]
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -14,10 +16,24 @@ defmodule CookingSchedulerWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # The whole site sits behind one shared password (ADR 0015); only logging in is open.
+  pipeline :protected do
+    plug :require_password
+  end
+
   scope "/", CookingSchedulerWeb do
     pipe_through :browser
 
-    live_session :default, on_mount: CookingSchedulerWeb.SearchHook do
+    get "/login", SessionController, :new
+    post "/login", SessionController, :create
+    delete "/logout", SessionController, :delete
+  end
+
+  scope "/", CookingSchedulerWeb do
+    pipe_through [:browser, :protected]
+
+    live_session :default,
+      on_mount: [CookingSchedulerWeb.SearchHook, {CookingSchedulerWeb.Auth, :require_password}] do
       live "/", HomeLive
       live "/setup", SetupLive
       live "/dishes/new", DishFormLive, :new
@@ -32,7 +48,13 @@ defmodule CookingSchedulerWeb.Router do
   end
 
   # Images are requested with an `image/*` Accept header, so no `accepts` plug here.
+  pipeline :photos do
+    plug :fetch_session
+  end
+
   scope "/", CookingSchedulerWeb do
+    pipe_through [:photos, :protected]
+
     get "/photos/:id", PhotoController, :show
   end
 

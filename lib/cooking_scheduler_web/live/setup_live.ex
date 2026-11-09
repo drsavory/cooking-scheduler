@@ -61,8 +61,9 @@ defmodule CookingSchedulerWeb.SetupLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    {:ok, _} = id |> Kitchen.get_appliance!() |> Kitchen.delete_appliance()
-    {:noreply, socket |> update(:invalid, &Map.delete(&1, String.to_integer(id))) |> load()}
+    appliance = Kitchen.get_appliance!(id)
+    {:ok, _} = Kitchen.delete_appliance(appliance)
+    {:noreply, socket |> update(:invalid, &Map.delete(&1, appliance.id)) |> load()}
   end
 
   # Switching scale (e.g. °C -> gas mark) resets the range to that scale's defaults,
@@ -167,15 +168,18 @@ defmodule CookingSchedulerWeb.SetupLive do
               phx-debounce="400"
             />
           </div>
-          <button
-            type="button"
+          <.confirm_button
+            id={"delete-appliance-#{@appliance.id}"}
+            title={"Remove #{@appliance.name}?"}
+            message="Dishes pinned to it go back to being placed automatically."
+            confirm_label="Remove"
+            tone={:danger}
+            on_confirm={JS.push("delete", value: %{id: @appliance.id})}
             class="btn btn-sm btn-circle btn-ghost mt-1.5 hover:text-error"
-            phx-click="delete"
-            phx-value-id={@appliance.id}
             aria-label={"Remove #{@appliance.name}"}
           >
             <.icon name="hero-trash" class="size-4" />
-          </button>
+          </.confirm_button>
         </div>
 
         <div :if={@appliance.kind == :oven} class="grid gap-x-4 sm:grid-cols-3">

@@ -76,7 +76,7 @@ defmodule CookingSchedulerWeb.SetupLiveTest do
     html =
       lv |> form("#appliance-#{oven.id}-form", appliance: %{max_temp: "250"}) |> render_change()
 
-    assert html =~ "gas marks only go up to 10"
+    assert html =~ "gas marks go from ¼ to 10"
     assert Kitchen.get_appliance!(oven.id).max_temp == 9.0
   end
 
@@ -117,7 +117,7 @@ defmodule CookingSchedulerWeb.SetupLiveTest do
     lv |> form("#appliance-#{cooker.id}-form", appliance: %{notes: "6.5L"}) |> render_change()
     assert Kitchen.get_appliance!(cooker.id).notes == "6.5L"
 
-    lv |> element("#appliance-card-#{cooker.id} button[aria-label^=Remove]") |> render_click()
+    confirm_dialog(lv, "delete-appliance-#{cooker.id}")
     refute has_element?(lv, "#appliance-card-#{cooker.id}")
   end
 end

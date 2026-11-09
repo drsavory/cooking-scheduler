@@ -7,10 +7,15 @@ defmodule CookingSchedulerWeb.ShoppingLive do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    {:ok, load(socket, Meals.get_meal!(id))}
+    meal = Meals.get_meal!(id)
+    if connected?(socket), do: Meals.subscribe(meal)
+    {:ok, load(socket, meal)}
   end
 
-  defp load(socket), do: load(socket, socket.assigns.meal)
+  defp load(socket), do: load(socket, Meals.get_meal!(socket.assigns.meal.id))
+
+  @impl true
+  def handle_info({:meal_updated, _id}, socket), do: {:noreply, load(socket)}
 
   defp load(socket, meal) do
     socket

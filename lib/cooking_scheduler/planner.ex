@@ -14,6 +14,7 @@ defmodule CookingScheduler.Planner do
       prep   = cook - prep            (start preparing)
   """
 
+  alias CookingScheduler.UnitConversion
   alias CookingScheduler.Kitchen.Appliance
   alias CookingScheduler.Meals.MealDish
 
@@ -98,15 +99,20 @@ defmodule CookingScheduler.Planner do
 
   defp timeline(%MealDish{} = d, serve) do
     out = serve - d.rest_minutes
-    # Time added on the day (extra_minutes) extends the cook from when it went in; it must
-    # not drag the planned start (and so the prep slot) earlier.
-    cook = out - (total_minutes(d) - d.extra_minutes)
+    # Only the planned cook time counts here: extra minutes added on the day extend the cook
+    # from when it went in (see `Cooking`), and must not drag the start or prep slot earlier.
+    cook = out - d.cook_minutes
 
     %Entry{dish: d, serve_at: serve, out_at: out, cook_at: cook, prep_at: cook - d.prep_minutes}
   end
 
+  # An oven dish only counts as pinned to an actual oven; anything else is left to be placed.
   defp pinned?(%Entry{dish: %{appliance_id: id, method: m}}, by_id) do
-    m in [:oven, :appliance] and id != nil and Map.has_key?(by_id, id)
+    case {m, by_id[id]} do
+      {:oven, %Appliance{kind: :oven}} -> true
+      {:appliance, %Appliance{}} -> true
+      _ -> false
+    end
   end
 
   defp uses_equipment?(%Entry{dish: d}), do: total_minutes(d) > 0
@@ -131,7 +137,7 @@ defmodule CookingScheduler.Planner do
   end
 
   defp assign_oven(e, usage, %{ovens: ovens, by_id: by_id}) do
-    temp_c = Appliance.to_celsius(e.dish.temp, e.dish.temp_unit)
+    temp_c = UnitConversion.convert!(e.dish.temp, e.dish.temp_unit, :c)
     claim = fn oven -> {:oven, oven.id} end
 
     cond do

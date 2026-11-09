@@ -30,7 +30,7 @@ custom classes must fully style the input
 
 - **Always use and maintain this import syntax** in the app.css file for projects generated with `phx.new`
 - **Never** use `@apply` when writing raw css
-- **Always** manually write your own tailwind-based components instead of using daisyUI for a unique, world-class design
+- daisyUI is in use for primitives only (`btn`, `badge`, `select`, `input`, `progress`, `toast`) on top of the two themes in `app.css`. Build layout and anything bespoke from Tailwind classes; don't reach for further daisyUI components
 - Out of the box **only the app.js and app.css bundles are supported**
   - You cannot reference an external vendor'd script `src` or link `href` in the layouts
   - You must import the vendor deps into app.js and app.css to use them
@@ -449,6 +449,10 @@ And **never** do this:
 <!-- phoenix:liveview-end -->
 
 <!-- usage-rules-end -->
+## Units and temperatures
+
+- **Every** conversion between units or temperature scales goes through `CookingScheduler.UnitConversion`, so the whole app agrees. **Never** add a conversion table, factor or formula anywhere else; extend `UnitConversion` instead. It is kept even where nothing calls a function yet.
+
 ## Product decisions
 
 - Product flow and layout decisions live in `docs/adr/`. Read the relevant ADR before changing navigation, screens or flow, and add a new numbered ADR for any new direction.

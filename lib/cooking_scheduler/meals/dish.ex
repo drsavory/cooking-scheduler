@@ -7,7 +7,7 @@ defmodule CookingScheduler.Meals.Dish do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias CookingScheduler.Duration
+  alias CookingScheduler.{Duration, RecipeLink}
   alias CookingScheduler.Kitchen.Appliance
 
   # The planning values that get copied between a dish and a meal dish.
@@ -50,6 +50,8 @@ defmodule CookingScheduler.Meals.Dish do
     |> merge_tags()
     |> validate_required([:name, :method])
     |> validate_length(:name, max: 80)
+    |> unique_constraint(:name, name: :dishes_lower_name_index, message: "is already a dish")
+    |> RecipeLink.validate(:link)
     |> validate_by_method()
   end
 
@@ -80,6 +82,7 @@ defmodule CookingScheduler.Meals.Dish do
         changeset
         |> validate_required([:temp, :temp_unit])
         |> validate_number(:temp, greater_than: 0)
+        |> validate_gas_mark()
         |> put_change(:ring_size, nil)
 
       :ring ->
@@ -93,6 +96,18 @@ defmodule CookingScheduler.Meals.Dish do
         |> put_change(:ring_size, nil)
         |> put_change(:temp, nil)
         |> put_change(:temp_unit, nil)
+    end
+  end
+
+  defp validate_gas_mark(changeset) do
+    if get_field(changeset, :temp_unit) == :gas_mark do
+      validate_number(changeset, :temp,
+        greater_than_or_equal_to: 0.25,
+        less_than_or_equal_to: 10,
+        message: "gas marks go from ¼ to 10"
+      )
+    else
+      changeset
     end
   end
 end
