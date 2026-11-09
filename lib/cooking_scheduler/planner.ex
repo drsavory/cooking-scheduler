@@ -6,9 +6,10 @@ defmodule CookingScheduler.Planner do
   Pure functions only (no database); times are minutes after midnight and can be
   negative for anything that has to start the day before.
 
-  Every dish is ready to serve at the serving time:
+  Every dish is ready to serve at its course's serving time (the meal's serving time plus the
+  dish's offset: a starter is earlier, a pudding later):
 
-      serve  = finish
+      serve  = meal serve + offset
       out    = serve - rest           (comes out of the oven / off the heat)
       cook   = out - cook             (goes in)
       prep   = cook - prep            (start preparing)
@@ -97,7 +98,8 @@ defmodule CookingScheduler.Planner do
     end
   end
 
-  defp timeline(%MealDish{} = d, serve) do
+  defp timeline(%MealDish{} = d, meal_serve) do
+    serve = meal_serve + (d.serve_offset_minutes || 0)
     out = serve - d.rest_minutes
     # Only the planned cook time counts here: extra minutes added on the day extend the cook
     # from when it went in (see `Cooking`), and must not drag the start or prep slot earlier.
@@ -119,6 +121,150 @@ defmodule CookingScheduler.Planner do
 
   @doc "Time on the heat: cooking plus any extra added on the day."
   def total_minutes(%MealDish{} = d), do: d.cook_minutes + d.extra_minutes
+
+  @doc "The latest time anything is served: the meal's serving time or a later course."
+  def last_serve(entries, serve_minutes) do
+    entries |> Enum.map(& &1.serve_at) |> Enum.max(fn -> serve_minutes end) |> max(serve_minutes)
+  end
+
+  # ---- oven events ------------------------------------------------------------
+
+  @doc """
+  What to do to each oven and when, from planned entries (ADR 0019): switch it on ahead of the
+  first dish (`:preheat`, the oven's `preheat_minutes` before), and change the temperature
+  when a dish going in wants a different one from what's already set (`:adjust`).
+
+  Each event is `%{kind, appliance, at, dish, temp_c, temp, temp_unit, id}` where `dish` is the
+  meal dish that triggers it, `temp` is in the oven's own scale and `id` is a stable key
+  (`"preheat:<oven id>:<dish id>"`) for ticking it off. Sorted by time.
+  """
+  def oven_events(entries, kitchen) do
+    for oven <- kitchen,
+        oven.kind == :oven,
+        mine =
+          entries
+          |> Enum.filter(&(&1.resource && &1.resource.id == oven.id && uses_equipment?(&1)))
+          |> Enum.sort_by(&{&1.cook_at, &1.dish.name}),
+        mine != [],
+        event <- events_for(oven, mine) do
+      event
+    end
+    |> Enum.sort_by(&{&1.at, &1.appliance.name})
+  end
+
+  defp events_for(oven, [first | rest]) do
+    preheat = oven.preheat_minutes || 0
+    first_c = dish_celsius(first.dish)
+
+    [event(:preheat, oven, first, first.cook_at - preheat, first_c)] ++
+      adjustments(oven, rest, first_c)
+  end
+
+  # Walk the put-ins in order; the oven is "set" to the last temperature asked for.
+  defp adjustments(oven, entries, setting) do
+    {events, _} =
+      Enum.map_reduce(entries, setting, fn e, setting ->
+        c = dish_celsius(e.dish)
+
+        if abs(c - setting) > 1,
+          do: {[event(:adjust, oven, e, e.cook_at, c)], c},
+          else: {[], setting}
+      end)
+
+    List.flatten(events)
+  end
+
+  defp event(kind, oven, entry, at, temp_c) do
+    %{
+      kind: kind,
+      appliance: oven,
+      at: at,
+      dish: entry.dish,
+      temp_c: temp_c,
+      temp: oven_temp(temp_c, oven.temp_unit),
+      temp_unit: oven.temp_unit,
+      id: "#{kind}:#{oven.id}:#{entry.dish.id}"
+    }
+  end
+
+  defp dish_celsius(%MealDish{temp: t, temp_unit: u}), do: UnitConversion.convert!(t, u, :c)
+
+  # Shown in the oven's own scale; if a gas-mark oven can't express it, fall back to °C.
+  defp oven_temp(temp_c, unit) do
+    case UnitConversion.convert(temp_c, :c, unit, round: 0) do
+      {:ok, t} -> {t, unit}
+      {:error, _} -> {Float.round(temp_c * 1.0, 0), :celsius}
+    end
+  end
+
+  # ---- suggestions ------------------------------------------------------------
+
+  @doc """
+  Small changes that would fix a dish's placement problems (ADR 0020): a longer rest, or another
+  oven. Re-plans the whole meal with each candidate and keeps those where the dish ends up
+  with no issues and nothing else gets worse. Returns `[%{label, attrs}]`, best first, at
+  most three.
+  """
+  def suggest(dishes, serve_minutes, kitchen, dish_id) do
+    dish = Enum.find(dishes, &(&1.id == dish_id))
+    before = plan(dishes, serve_minutes, kitchen)
+
+    if dish && entry_issues(before, dish_id) != [] do
+      others_before = for e <- before, e.dish.id != dish_id, into: %{}, do: {e.dish.id, e.issues}
+
+      candidates(dish, kitchen)
+      |> Enum.filter(fn {_label, attrs} ->
+        trial = Enum.map(dishes, &if(&1.id == dish_id, do: struct(&1, attrs), else: &1))
+        after_ = plan(trial, serve_minutes, kitchen)
+
+        entry_issues(after_, dish_id) == [] and
+          Enum.all?(after_, fn e ->
+            e.dish.id == dish_id or
+              length(e.issues) <= length(Map.get(others_before, e.dish.id, []))
+          end)
+      end)
+      |> Enum.take(3)
+      |> Enum.map(fn {label, attrs} -> %{label: label, attrs: attrs} end)
+    else
+      []
+    end
+  end
+
+  defp entry_issues(entries, dish_id) do
+    case Enum.find(entries, &(&1.dish.id == dish_id)) do
+      nil -> []
+      e -> e.issues
+    end
+  end
+
+  # Cheapest changes first: a little more rest, then another oven, then a lot more rest.
+  defp candidates(%MealDish{method: :oven} = d, kitchen) do
+    ovens = for o <- kitchen, o.kind == :oven, o.id != d.appliance_id, do: o
+
+    rests = fn minutes ->
+      for m <- minutes,
+          do: {"Rest #{m}m longer", %{rest_minutes: d.rest_minutes + m}}
+    end
+
+    rests.([15, 30]) ++
+      Enum.map(ovens, &{"Use #{&1.name}", %{appliance_id: &1.id}}) ++
+      rests.([45, 60]) ++
+      for(
+        o <- ovens,
+        m <- [15, 30],
+        do:
+          {"Use #{o.name}, rest #{m}m longer",
+           %{appliance_id: o.id, rest_minutes: d.rest_minutes + m}}
+      )
+  end
+
+  defp candidates(%MealDish{method: :ring} = d, _kitchen) do
+    for m <- [15, 30, 45, 60], do: {"Rest #{m}m longer", %{rest_minutes: d.rest_minutes + m}}
+  end
+
+  defp candidates(%MealDish{} = d, _kitchen) do
+    for m <- [15, 30, 45, 60], do: {"Rest #{m}m longer", %{rest_minutes: d.rest_minutes + m}}
+  end
 
   # ---- assignment -----------------------------------------------------------
 

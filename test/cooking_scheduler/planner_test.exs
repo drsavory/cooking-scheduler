@@ -205,4 +205,71 @@ defmodule CookingScheduler.PlannerTest do
       assert row.peak == 1
     end
   end
+
+  describe "courses" do
+    test "a dish's serving offset moves its whole timeline" do
+      starter = dish(1, serve_offset_minutes: -45, cook_minutes: 20)
+      pudding = dish(2, serve_offset_minutes: 60, cook_minutes: 30)
+      entries = Planner.plan([starter, pudding], @serve, [oven(1, "Oven")])
+
+      assert entry(entries, 1).serve_at == @serve - 45
+      assert entry(entries, 1).cook_at == @serve - 45 - 20
+      assert entry(entries, 2).serve_at == @serve + 60
+      assert Planner.last_serve(entries, @serve) == @serve + 60
+    end
+  end
+
+  describe "oven events" do
+    test "preheat before the first dish, then a change when a hotter dish goes in later" do
+      o = %{oven(1, "Main") | preheat_minutes: 20}
+      long = dish(1, temp: 4.0, cook_minutes: 180)
+      hot = dish(2, temp: 8.0, cook_minutes: 30, rest_minutes: 0)
+      # only one oven, so the hot dish is placed after the long one is out
+      long = %{long | rest_minutes: 40}
+      entries = Planner.plan([long, hot], @serve, [o])
+      assert Enum.all?(entries, &(&1.issues == []))
+
+      [preheat, adjust] = Planner.oven_events(entries, [o])
+      assert %{kind: :preheat, at: at, temp: {4.0, :gas_mark}, id: "preheat:1:1"} = preheat
+      assert at == entry(entries, 1).cook_at - 20
+      assert %{kind: :adjust, temp: {8.0, :gas_mark}, id: "adjust:1:2"} = adjust
+      assert adjust.at == entry(entries, 2).cook_at
+    end
+
+    test "dishes at the same temperature don't produce a change" do
+      o = oven(1, "Main")
+      entries = Planner.plan([dish(1, []), dish(2, cook_minutes: 30)], @serve, [o])
+      assert [%{kind: :preheat}] = Planner.oven_events(entries, [o])
+    end
+
+    test "the temperature is shown in the oven's own scale" do
+      o = oven(1, "Fan", :celsius, 50.0, 250.0)
+      entries = Planner.plan([dish(1, temp: 6.0)], @serve, [o])
+      assert [%{temp: {200.0, :celsius}}] = Planner.oven_events(entries, [o])
+    end
+  end
+
+  describe "suggestions" do
+    test "a dish that can't be placed gets small fixes that work" do
+      only = oven(1, "Only")
+      a = dish(1, temp: 4.0, cook_minutes: 60)
+      b = dish(2, temp: 8.0, cook_minutes: 30)
+      [%{label: label, attrs: attrs} | _] = Planner.suggest([a, b], @serve, [only], 2)
+      assert label =~ "Rest"
+      fixed = Planner.plan([a, struct(b, attrs)], @serve, [only])
+      assert Enum.all?(fixed, &(&1.issues == []))
+    end
+
+    test "another oven is offered when there is one" do
+      ovens = [oven(1, "Left"), oven(2, "Right")]
+      a = dish(1, temp: 4.0, appliance_id: 1)
+      b = dish(2, temp: 8.0, appliance_id: 1)
+      labels = Enum.map(Planner.suggest([a, b], @serve, ovens, 2), & &1.label)
+      assert "Use Right" in labels
+    end
+
+    test "nothing to suggest for a dish without problems" do
+      assert Planner.suggest([dish(1, [])], @serve, [oven(1, "Oven")], 1) == []
+    end
+  end
 end

@@ -11,9 +11,10 @@ defmodule CookingScheduler.Cooking do
 
   defmodule Task do
     @moduledoc false
-    # kind: :prep | :start | :out
+    # kind: :prep | :start | :out, or an oven job (:preheat | :adjust, with `event` set and
+    # `entry` the dish that triggers it)
     # state: :done | :overdue | :now | :upcoming
-    defstruct [:entry, :kind, :at, :state]
+    defstruct [:entry, :kind, :at, :state, :event]
   end
 
   defmodule Live do
@@ -65,21 +66,40 @@ defmodule CookingScheduler.Cooking do
   def lives(entries, now), do: Enum.map(entries, &live(&1, now))
 
   @doc """
-  When dinner will really be ready: the planned serving time, or later if anything is
-  running behind (started late, taking longer, or overdue to start).
+  How far behind the meal is running, in minutes (0 when on time): the most any dish will be
+  ready after its own course's serving time (started late, taking longer, or overdue to start).
   """
-  def projected_serve(lives, serve) do
+  def behind(lives) do
     lives
     |> Enum.reject(&(&1.phase == :unscheduled))
-    |> Enum.map(& &1.ready_at)
-    |> Enum.max(fn -> serve end)
-    |> max(serve)
+    |> Enum.map(&(&1.ready_at - &1.entry.serve_at))
+    |> Enum.max(fn -> 0 end)
+    |> max(0)
   end
 
-  @doc "Every task still to do, then those already done, each classified against `now`."
-  def tasks(lives, now) do
-    lives
-    |> Enum.flat_map(&tasks_for(&1, now))
+  @doc "When dinner will really be ready: the planned serving time plus `behind/1`."
+  def projected_serve(lives, serve), do: serve + behind(lives)
+
+  @doc """
+  Every task still to do, then those already done, each classified against `now`.
+
+  `oven_events` (from `Planner.oven_events/2`) become preheat / turn-the-oven tasks; `marks`
+  is the meal's list of ticked oven event ids. An oven task also counts as done once the dish
+  it is for has gone in.
+  """
+  def tasks(lives, now, oven_events \\ [], marks \\ []) do
+    by_dish = Map.new(lives, &{&1.entry.dish.id, &1})
+
+    oven =
+      for ev <- oven_events, live = by_dish[ev.dish.id], live.phase != :unscheduled do
+        done? = ev.id in marks or live.entry.dish.cook_started_at != nil
+
+        # Follow the dish if it is running late: the oven only needs to be ready for it.
+        at = ev.at + max(live.cook_at - live.entry.cook_at, 0)
+        %{task(live.entry, ev.kind, at, done?, now) | event: ev}
+      end
+
+    (Enum.flat_map(lives, &tasks_for(&1, now)) ++ oven)
     |> Enum.sort_by(&{&1.at, kind_order(&1.kind), &1.entry.dish.name})
   end
 
@@ -89,8 +109,10 @@ defmodule CookingScheduler.Cooking do
     d = e.dish
     started? = d.cook_started_at != nil or d.cook_done_at != nil
 
+    # Prep done ahead (day before / morning of) is the Prep screen's job; it only shows up
+    # here if it was never ticked.
     prep =
-      if d.prep_minutes > 0,
+      if d.prep_minutes > 0 and (d.prep_day == :before_cooking or not d.prepped),
         do: [task(e, :prep, e.prep_at, d.prepped, now)],
         else: []
 
@@ -113,6 +135,8 @@ defmodule CookingScheduler.Cooking do
     %Task{entry: entry, kind: kind, at: at, state: state}
   end
 
+  defp kind_order(:preheat), do: -2
+  defp kind_order(:adjust), do: -1
   defp kind_order(:prep), do: 0
   defp kind_order(:start), do: 1
   defp kind_order(:out), do: 2

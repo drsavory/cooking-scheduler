@@ -96,7 +96,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     assert Meals.get_meal!(meal.id).status == :prepping
   end
 
-  test "shopping list totals amounts across dishes per unit", %{
+  test "shopping list totals amounts across dishes, combining metric units", %{
     conn: conn,
     meal: meal,
     with_prep: p,
@@ -110,7 +110,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
     [onion, potatoes, stock] = Meals.shopping_list(meal)
     assert onion.amounts == [{3.0, nil}]
     assert onion.dishes == ["Gravy", "Potatoes"]
-    assert potatoes.amounts == [{500.0, :g}, {1.0, :kg}]
+    assert potatoes.amounts == [{1.5, :kg}]
     assert stock.amounts == []
 
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/prep")
@@ -118,7 +118,7 @@ defmodule CookingSchedulerWeb.PrepLiveTest do
 
     {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/shopping")
     assert has_element?(lv, "#shopping-#{onion.ingredient.id}", "3 items")
-    assert has_element?(lv, "#shopping-#{potatoes.ingredient.id}", "500 g + 1 kg")
+    assert has_element?(lv, "#shopping-#{potatoes.ingredient.id}", "1.5 kg")
   end
 
   test "shopping items can be ticked off and unticked", %{conn: conn, meal: meal, with_prep: p} do

@@ -76,10 +76,8 @@ defmodule CookingScheduler.Meals do
     # Dishes skipped when a meal is finished early don't count towards the delay.
     delay =
       if meal.status == :complete do
-        ready =
-          for d <- timed, d.cook_done_at, do: d.cook_done_at + d.rest_minutes
-
-        max(Enum.max(ready, fn -> 0 end) - Meal.serve_minutes(meal), 0)
+        late = for d <- timed, d.cook_done_at, do: lateness(meal, d)
+        max(Enum.max(late, fn -> 0 end), 0)
       end
 
     %{
@@ -90,6 +88,15 @@ defmodule CookingScheduler.Meals do
       delay: delay
     }
   end
+
+  @doc """
+  How many minutes after its course's serving time a dish was actually ready (negative =
+  early), or nil if it was never finished.
+  """
+  def lateness(%Meal{} = meal, %MealDish{cook_done_at: done} = d) when is_integer(done),
+    do: done + d.rest_minutes - (Meal.serve_minutes(meal) + d.serve_offset_minutes)
+
+  def lateness(%Meal{}, %MealDish{}), do: nil
 
   def change_meal(%Meal{} = meal, attrs \\ %{}), do: Meal.changeset(meal, attrs)
 
@@ -111,37 +118,66 @@ defmodule CookingScheduler.Meals do
   end
 
   @doc """
-  Creates a new meal containing a copy of every dish from `source` (see `copy_meal_dishes/2`).
+  Creates a new meal containing a copy of every dish from `source` (see `copy_meal_dishes/3`).
+  With `actual_times: true`, each dish's cook time becomes how long it really took last time
+  (ADR 0024).
   """
-  def create_meal_from(%Meal{} = source, attrs \\ %{}) do
+  def create_meal_from(%Meal{} = source, attrs \\ %{}, opts \\ []) do
     Repo.transaction(fn ->
       {:ok, meal} =
         %Meal{name: next_name(source.name), date: Date.utc_today(), serve_at: source.serve_at}
         |> Meal.changeset(attrs)
         |> Repo.insert()
 
-      copy_meal_dishes(source, meal)
+      copy_meal_dishes(source, meal, opts)
 
       meal
     end)
   end
 
   @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
-             rest_minutes appliance_id notes link dish_id)a
+             rest_minutes appliance_id notes link dish_id serve_offset_minutes prep_day)a
 
   @doc """
   Copies every dish from `source` into `target`: same times, temperatures, notes and
-  links, with the day's progress cleared and ingredients/prep unticked.
+  links, with the day's progress cleared and ingredients/prep unticked. With
+  `actual_times: true`, a dish that was cooked takes its real time on the heat as its cook time.
   """
-  def copy_meal_dishes(%Meal{} = source, %Meal{} = target) do
+  def copy_meal_dishes(%Meal{} = source, %Meal{} = target, opts \\ []) do
     for dish <- list_meal_dishes(source) do
-      fields = dish |> Map.take(@copied) |> Map.put(:meal_id, target.id)
+      fields =
+        dish
+        |> Map.take(@copied)
+        |> Map.put(:meal_id, target.id)
+        |> Map.put(
+          :cook_minutes,
+          if(opts[:actual_times], do: actual_cook(dish), else: dish.cook_minutes)
+        )
+
       copy = Repo.insert!(struct(MealDish, fields))
       copy_ingredients({:meal_dish, dish.id}, {:meal_dish, copy.id})
     end
 
     changed(target.id)
     :ok
+  end
+
+  @doc "How long a dish really spent on the heat, or its planned time plus extra if unknown."
+  def actual_cook(%MealDish{cook_started_at: s, cook_done_at: d})
+      when is_integer(s) and is_integer(d) and d > s,
+      do: d - s
+
+  def actual_cook(%MealDish{} = d), do: d.cook_minutes + d.extra_minutes
+
+  @doc "Copies one meal dish (and its ingredients) into another meal, progress cleared."
+  def copy_meal_dish(%MealDish{} = dish, %Meal{} = target) do
+    fields = dish |> Map.take(@copied) |> Map.put(:meal_id, target.id)
+
+    with {:ok, copy} <- Repo.insert(struct(MealDish, fields)) do
+      copy_ingredients({:meal_dish, dish.id}, {:meal_dish, copy.id})
+      changed(target.id)
+      {:ok, copy}
+    end
   end
 
   # "Christmas 2025" -> "Christmas 2026"; anything else gets " (copy)".
@@ -290,6 +326,14 @@ defmodule CookingScheduler.Meals do
     :ok
   end
 
+  @doc "Ticks (or unticks) an oven task such as `\"preheat:3:12\"` (see `Planner.oven_events/2`)."
+  def mark_oven_event(%Meal{} = meal, id, done?) when is_binary(id) do
+    marks =
+      if done?, do: Enum.uniq([id | meal.oven_marks]), else: List.delete(meal.oven_marks, id)
+
+    meal |> Ecto.Changeset.change(oven_marks: marks) |> Repo.update() |> changed(meal.id)
+  end
+
   def add_extra(%MealDish{} = d, minutes),
     do:
       d
@@ -315,7 +359,7 @@ defmodule CookingScheduler.Meals do
     )
 
     Repo.update_all(from(m in Meal, where: m.id == ^id),
-      set: [finished_at: nil, status: :prepping]
+      set: [finished_at: nil, status: :prepping, oven_marks: []]
     )
 
     changed(id)
@@ -398,6 +442,21 @@ defmodule CookingScheduler.Meals do
     end
   end
 
+  @doc """
+  Where a library dish has been cooked, newest first: `[%{meal, meal_dish, lateness}]`, only
+  from meals that are complete (ADR 0024). `lateness` is `lateness/2`.
+  """
+  def dish_history(%Dish{id: id}) do
+    Repo.all(
+      from d in MealDish,
+        join: m in assoc(d, :meal),
+        where: d.dish_id == ^id and m.status == :complete,
+        order_by: [desc: m.date, desc: m.id],
+        select: {m, d}
+    )
+    |> Enum.map(fn {m, d} -> %{meal: m, meal_dish: d, lateness: lateness(m, d)} end)
+  end
+
   @doc "Every meal each dish has been used in: `%{dish_id => [{meal, dish}]}`, newest meal first."
   def usage_by_dish do
     Repo.all(
@@ -455,11 +514,26 @@ defmodule CookingScheduler.Meals do
   @doc "Every known ingredient, A to Z."
   def list_ingredients, do: Repo.all(from i in Ingredient, order_by: fragment("lower(?)", i.name))
 
+  def get_ingredient!(id), do: Repo.get!(Ingredient, id)
+
+  @doc "Ingredient names of every library dish: `%{dish_id => [name]}` (for search)."
+  def ingredient_names_by_dish do
+    Repo.all(
+      from di in DishIngredient,
+        join: i in assoc(di, :ingredient),
+        where: not is_nil(di.dish_id),
+        select: {di.dish_id, i.name}
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  end
+
   @doc """
   Everything a meal needs, one row per ingredient, A to Z:
-  `%{ingredient:, amounts:, dishes:, bought?:}`. `amounts` totals each unit separately (g with g, never
-  g with kg) as `[{amount, unit}]`, and is empty when no dish gives an amount. `dishes` names
-  the dishes that use it.
+  `%{ingredient:, amounts:, dishes:, bought?:}`. `amounts` is totalled per unit as
+  `[{amount, unit}]`, with metric weights and volumes combined (500 g + 1 kg is 1.5 kg; spoons
+  and cups stay separate), and is empty when no dish gives an amount. `dishes` names the dishes
+  that use it. Cupboard staples are included (see `Ingredient.staple`); screens decide where
+  to show them.
   """
   def shopping_list(%Meal{id: id}) do
     bought =
@@ -480,9 +554,8 @@ defmodule CookingScheduler.Meals do
       amounts =
         rows
         |> Enum.filter(fn {_, amount, _, _} -> amount end)
-        |> Enum.group_by(fn {_, _, unit, _} -> unit end, fn {_, amount, _, _} -> amount end)
-        |> Enum.map(fn {unit, list} -> {Enum.sum(list), unit} end)
-        |> Enum.sort_by(fn {_, unit} -> to_string(unit) end)
+        |> Enum.map(fn {_, amount, unit, _} -> {amount, unit} end)
+        |> DishIngredient.combine_amounts()
 
       dishes = rows |> Enum.map(fn {_, _, _, name} -> name end) |> Enum.uniq()
 
@@ -529,16 +602,18 @@ defmodule CookingScheduler.Meals do
   end
 
   # Re-derives "all ingredients in" for the meal's dishes that use `ingredient_id` (or any
-  # ingredient, for nil). Dishes with no ingredients are left to be ticked by hand.
+  # ingredient, for nil). Dishes with no ingredients are left to be ticked by hand. Cupboard
+  # staples count as in.
   defp sync_ingredients_in(%Meal{id: id}, ingredient_id) do
     rows =
       Repo.all(
         from di in DishIngredient,
           join: d in assoc(di, :meal_dish),
+          join: i in assoc(di, :ingredient),
           left_join: c in ShoppingCheck,
           on: c.meal_id == d.meal_id and c.ingredient_id == di.ingredient_id,
           where: d.meal_id == ^id,
-          select: {d.id, di.ingredient_id, not is_nil(c.id)}
+          select: {d.id, di.ingredient_id, not is_nil(c.id) or i.staple}
       )
 
     for {meal_dish_id, dish_rows} <- Enum.group_by(rows, &elem(&1, 0)),
@@ -551,6 +626,84 @@ defmodule CookingScheduler.Meals do
     end
 
     :ok
+  end
+
+  @doc """
+  The shopping list as plain text to share or paste (ADR 0021): what's still to buy, grouped
+  by aisle, then the cupboard staples to check.
+  """
+  def shopping_list_text(%Meal{} = meal) do
+    rows = shopping_list(meal)
+    {staples, buy} = Enum.split_with(rows, & &1.ingredient.staple)
+    to_buy = Enum.reject(buy, & &1.bought?)
+
+    line = fn row ->
+      amounts = Enum.map_join(row.amounts, " + ", &DishIngredient.format_amount/1)
+      "☐ " <> row.ingredient.name <> if(amounts == "", do: "", else: " · " <> amounts)
+    end
+
+    groups =
+      to_buy
+      |> Enum.group_by(& &1.ingredient.category)
+      |> Enum.sort_by(fn {cat, _} -> category_order(cat) end)
+      |> Enum.map(fn {cat, rows} ->
+        heading = if cat, do: Ingredient.category_label(cat), else: "To buy"
+        heading <> "\n" <> Enum.map_join(rows, "\n", line)
+      end)
+
+    cupboard =
+      if staples == [],
+        do: [],
+        else: [
+          "Check the cupboard\n" <> Enum.map_join(staples, "\n", &("☐ " <> &1.ingredient.name))
+        ]
+
+    ["Shopping for #{meal.name}" | groups ++ cupboard] |> Enum.join("\n\n")
+  end
+
+  @doc "Sort key for an aisle: unfiled first, then shop order."
+  def category_order(nil), do: -1
+  def category_order(cat), do: Enum.find_index(Ingredient.categories(), &(&1 == cat))
+
+  @doc "Files an ingredient: its aisle `category` and whether it's a cupboard `staple`."
+  def update_ingredient(%Ingredient{} = ingredient, attrs) do
+    with {:ok, updated} <- ingredient |> Ingredient.changeset(attrs) |> Repo.update() do
+      # Staples count as "in", so every meal using it may change.
+      meal_ids =
+        Repo.all(
+          from di in DishIngredient,
+            join: d in assoc(di, :meal_dish),
+            where: di.ingredient_id == ^ingredient.id,
+            distinct: true,
+            select: d.meal_id
+        )
+
+      for id <- meal_ids do
+        sync_ingredients_in(%Meal{id: id}, ingredient.id)
+        changed(id)
+      end
+
+      {:ok, updated}
+    end
+  end
+
+  @doc """
+  Adds every line of a pasted ingredient list to a dish ("200 g butter", "2 onions, chopped",
+  "1 1/2 cups flour", "salt"). Lines that can't be read are returned in `skipped`. Ounces and
+  pounds become grams, fluid ounces and pints millilitres (via `UnitConversion`).
+  """
+  def add_ingredients_from_text(dish, text) when is_binary(text) do
+    lines =
+      text |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    Enum.reduce(lines, %{added: [], skipped: []}, fn line, acc ->
+      with {:ok, name, amount, unit} <- DishIngredient.parse_line(line),
+           {:ok, di} <- add_ingredient(dish, name, amount, unit) do
+        %{acc | added: acc.added ++ [di]}
+      else
+        _ -> %{acc | skipped: acc.skipped ++ [line]}
+      end
+    end)
   end
 
   @doc "A dish's ingredients as `[%DishIngredient{ingredient: ...}]`, A to Z. Takes a meal dish or a dish."

@@ -91,4 +91,44 @@ defmodule CookingScheduler.CookingTest do
     states = lives([d], 12 * 60 + 30) |> Cooking.tasks(750) |> Map.new(&{&1.kind, &1.state})
     assert states == %{prep: :done, start: :done, out: :done}
   end
+
+  test "a pudding served later isn't counted as running behind" do
+    pudding = dish(%{id: 2, name: "Pudding", serve_offset_minutes: 60, rest_minutes: 0})
+    ls = lives([dish(%{}), pudding], 9 * 60)
+    assert Cooking.behind(ls) == 0
+    assert Cooking.projected_serve(ls, @serve) == @serve
+  end
+
+  test "prep done ahead of the day is not a task, unless it was never ticked" do
+    ahead = dish(%{prep_day: :day_before, prepped: true})
+    refute Enum.any?(Cooking.tasks(lives([ahead], 9 * 60), 9 * 60), &(&1.kind == :prep))
+
+    missed = dish(%{prep_day: :day_before, prepped: false})
+    assert Enum.any?(Cooking.tasks(lives([missed], 9 * 60), 9 * 60), &(&1.kind == :prep))
+  end
+
+  test "oven events become tasks, done when ticked or once the dish is in" do
+    entries = Planner.plan([dish(%{})], @serve, [@oven])
+    [preheat] = Planner.oven_events(entries, [@oven])
+    assert preheat.at == 630 - 15
+
+    find = fn tasks -> Enum.find(tasks, &(&1.kind == :preheat)) end
+
+    task = find.(Cooking.tasks(Cooking.lives(entries, 600), 600, [preheat], []))
+    assert %{kind: :preheat, at: 615, state: :upcoming, event: ^preheat} = task
+
+    ticked = find.(Cooking.tasks(Cooking.lives(entries, 600), 600, [preheat], [preheat.id]))
+    assert ticked.state == :done
+
+    started = Planner.plan([dish(%{cook_started_at: 640})], @serve, [@oven])
+    assert find.(Cooking.tasks(Cooking.lives(started, 650), 650, [preheat], [])).state == :done
+  end
+
+  test "an oven task follows a dish that is overdue to start" do
+    entries = Planner.plan([dish(%{})], @serve, [@oven])
+    [preheat] = Planner.oven_events(entries, [@oven])
+    # 11:00: the dish should have gone in at 10:30, so it now goes in at 11:00
+    tasks = Cooking.tasks(Cooking.lives(entries, 660), 660, [preheat], [])
+    assert Enum.find(tasks, &(&1.kind == :preheat)).at == 660 - 15
+  end
 end
