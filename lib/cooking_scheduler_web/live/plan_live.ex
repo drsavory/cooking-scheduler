@@ -12,6 +12,7 @@ defmodule CookingSchedulerWeb.PlanLive do
     {:ok,
      socket
      |> assign(:invalid, %{})
+     |> assign(:open, MapSet.new())
      |> assign(:adding, nil)
      |> assign(:saved_query, "")
      |> assign(:from_meal, nil)
@@ -110,6 +111,18 @@ defmodule CookingSchedulerWeb.PlanLive do
       {:ok, _} -> {:noreply, socket |> put_flash(:info, "#{dish.name} added") |> load()}
       {:error, _} -> {:noreply, put_flash(socket, :error, "#{dish.name} couldn't be added")}
     end
+  end
+
+  # Rows are a one-line summary; tapping one opens its settings (ADR 0026).
+  def handle_event("toggle_dish", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+
+    open =
+      if MapSet.member?(socket.assigns.open, id),
+        do: MapSet.delete(socket.assigns.open, id),
+        else: MapSet.put(socket.assigns.open, id)
+
+    {:noreply, assign(socket, :open, open)}
   end
 
   # A planner suggestion, applied to the dish (ADR 0020).
@@ -464,43 +477,47 @@ defmodule CookingSchedulerWeb.PlanLive do
   attr :class, :string, default: nil
   attr :rest, :global, include: ~w(placeholder step min)
 
-  # A compact field with its label inside the box, so a dish's inputs fit on one row.
+  # A compact field with a small label above the box.
   defp mini(%{type: "select"} = assigns) do
     ~H"""
-    <label class={["select select-sm min-w-0", @class, @f.errors != [] && "select-error"]}>
-      <.mini_label label={@label} />
-      <select id={@f.id} name={@f.name} class="ms-0 min-w-0 flex-1 ps-1.5" {@rest}>
+    <div class={["grid min-w-0 gap-1", @class]}>
+      <.mini_label label={@label} for={@f.id} />
+      <select
+        id={@f.id}
+        name={@f.name}
+        class={["select select-sm w-full", @f.errors != [] && "select-error"]}
+        {@rest}
+      >
         {Phoenix.HTML.Form.options_for_select(@options, @f.value)}
       </select>
-    </label>
+    </div>
     """
   end
 
   defp mini(assigns) do
     ~H"""
-    <div class={["min-w-0", @class]}>
-      <label class={["input input-sm w-full", @f.errors != [] && "input-error"]}>
-        <.mini_label label={@label} />
-        <input
-          type={@type}
-          id={@f.id}
-          name={@f.name}
-          value={mini_value(@f.value)}
-          autocomplete="off"
-          class="min-w-0 flex-1 tabular-nums"
-          {@rest}
-        />
-      </label>
+    <div class={["grid min-w-0 gap-1", @class]}>
+      <.mini_label label={@label} for={@f.id} />
+      <input
+        type={@type}
+        id={@f.id}
+        name={@f.name}
+        value={mini_value(@f.value)}
+        autocomplete="off"
+        class={["input input-sm w-full tabular-nums", @f.errors != [] && "input-error"]}
+        {@rest}
+      />
       <.mini_errors f={@f} />
     </div>
     """
   end
 
   attr :label, :string, required: true
+  attr :for, :string, required: true
 
   defp mini_label(assigns) do
     ~H"""
-    <span class="label mr-0 shrink-0 px-0 text-[10px] font-semibold uppercase tracking-wide">{@label}</span>
+    <label for={@for} class="ps-1 text-xs font-medium text-base-content/60">{@label}</label>
     """
   end
 
@@ -527,7 +544,7 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   defp duration_input(assigns) do
     ~H"""
-    <.mini f={@form[@field]} label={@label} placeholder="1:30" class="w-32" phx-debounce="500" />
+    <.mini f={@form[@field]} label={@label} placeholder="1:30" class="w-24" phx-debounce="500" />
     """
   end
 
@@ -584,44 +601,94 @@ defmodule CookingSchedulerWeb.PlanLive do
   defp out_label(:ring), do: "Off"
   defp out_label(:appliance), do: "Done"
 
+  # What a closed row says about the dish's settings, so it doesn't need its inputs on show.
+  defp summary(d) do
+    [
+      d.prep_minutes > 0 && "#{Duration.format(d.prep_minutes)} prep#{prep_when(d.prep_day)}",
+      if(d.cook_minutes > 0,
+        do: "#{Duration.format(d.cook_minutes)} cook",
+        else: "No cooking time"
+      ),
+      d.rest_minutes > 0 && "#{Duration.format(d.rest_minutes)} rest",
+      d.method == :oven && d.temp && temp_text({d.temp, d.temp_unit}),
+      d.method == :oven && share_text(d.oven_share),
+      d.method == :ring && d.ring_size &&
+        "#{d.ring_size |> Atom.to_string() |> String.capitalize()} ring"
+    ]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" · ")
+  end
+
+  defp prep_when(:day_before), do: " the day before"
+  defp prep_when(:morning_of), do: " in the morning"
+  defp prep_when(_), do: ""
+
+  defp share_text(share) do
+    case List.keyfind(MealDish.oven_share_options(), share, 1) do
+      {"Whole oven", _} -> "whole oven"
+      {label, _} -> "#{String.downcase(label)} oven"
+      nil -> nil
+    end
+  end
+
+  attr :label, :string, required: true
+  slot :inner_block, required: true
+
+  defp field_group(assigns) do
+    ~H"""
+    <div class="grid items-start gap-1.5 sm:grid-cols-[5.5rem_1fr]">
+      <span class="pt-0.5 text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+        {@label}
+      </span>
+      <div class="flex flex-wrap items-start gap-x-2 gap-y-2">{render_slot(@inner_block)}</div>
+    </div>
+    """
+  end
+
   attr :entry, :any, required: true
   attr :form, :any, required: true
   attr :kitchen, :list, required: true
   attr :fixes, :list, default: []
+  attr :open, :boolean, default: false
 
+  # One line per dish: name, what it's set to, and when it happens. Tapping it opens the
+  # settings underneath (ADR 0026).
   defp dish_card(assigns) do
     assigns = assign(assigns, :dish, assigns.entry.dish)
 
     ~H"""
     <li
       id={"dish-card-#{@dish.id}"}
-      class="pop-in rounded-xl border border-base-300 bg-base-100/90 px-3 py-2.5 shadow-sm backdrop-blur transition hover:shadow-md"
+      class={[
+        "pop-in rounded-xl border bg-base-100/90 shadow-sm backdrop-blur transition",
+        @open && "border-primary/30 shadow-md",
+        !@open && "border-base-300 hover:border-base-content/20 hover:shadow-md"
+      ]}
     >
       <.form for={@form} id={@form.id <> "-form"} phx-change="update">
         <input type="hidden" name="meal_dish_id" value={@dish.id} />
 
-        <%!-- row 1: what it is, when it happens, where it goes --%>
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <div class="flex min-w-0 flex-1 basis-52 items-center gap-2">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
+          <button
+            type="button"
+            id={"toggle-dish-#{@dish.id}"}
+            phx-click="toggle_dish"
+            phx-value-id={@dish.id}
+            aria-expanded={to_string(@open)}
+            aria-controls={"settings-#{@dish.id}"}
+            class="group flex min-w-0 flex-1 basis-60 cursor-pointer items-center gap-2.5 rounded-lg text-left"
+          >
             <span
-              class="grid size-7 shrink-0 place-items-center rounded-lg bg-base-200 text-base-content/70"
+              class="grid size-8 shrink-0 place-items-center rounded-lg bg-base-200 text-base-content/70 transition group-hover:bg-primary/10 group-hover:text-primary"
               title={method_label(@dish.method)}
             >
               <.icon name={method_icon(@dish.method)} class="size-4" />
             </span>
-            <input
-              type="text"
-              id={@form[:name].id}
-              name={@form[:name].name}
-              value={@form[:name].value}
-              aria-label="Name"
-              phx-debounce="400"
-              class={[
-                "input input-ghost input-sm -ml-1 min-w-0 flex-1 px-2 text-base font-semibold",
-                @form[:name].errors != [] && "input-error"
-              ]}
-            />
-          </div>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate font-semibold leading-tight">{@dish.name}</span>
+              <span class="block truncate text-xs text-base-content/55">{summary(@dish)}</span>
+            </span>
+          </button>
 
           <.timeline entry={@entry} />
 
@@ -631,6 +698,19 @@ defmodule CookingSchedulerWeb.PlanLive do
           </span>
 
           <div class="ml-auto flex items-center">
+            <button
+              type="button"
+              phx-click="toggle_dish"
+              phx-value-id={@dish.id}
+              class={["btn btn-xs btn-circle btn-ghost", @open && "text-primary"]}
+              aria-label={if(@open, do: "Close #{@dish.name}", else: "Edit #{@dish.name}")}
+              title={if(@open, do: "Done", else: "Edit")}
+            >
+              <.icon
+                name="hero-chevron-down"
+                class={["size-4 transition-transform duration-200", @open && "rotate-180"]}
+              />
+            </button>
             <.link
               id={"view-dish-#{@dish.id}"}
               navigate={~p"/meals/#{@dish.meal_id}/dishes/#{@dish.id}"}
@@ -640,15 +720,6 @@ defmodule CookingSchedulerWeb.PlanLive do
             >
               <.icon name="hero-eye" class="size-4" />
             </.link>
-            <button
-              type="button"
-              class="btn btn-xs btn-circle btn-ghost"
-              phx-click={JS.toggle(to: "#more-#{@dish.id}", display: "grid")}
-              aria-label={"More about #{@dish.name}"}
-              title="Notes, link & checklist"
-            >
-              <.icon name="hero-ellipsis-horizontal" class="size-4" />
-            </button>
             <.confirm_button
               id={"delete-dish-#{@dish.id}"}
               title={"Remove #{@dish.name} from this meal?"}
@@ -664,77 +735,7 @@ defmodule CookingSchedulerWeb.PlanLive do
           </div>
         </div>
 
-        <%!-- row 2: the inputs; times first, then heat and space --%>
-        <div class="mt-2 flex flex-wrap items-start gap-1.5">
-          <.duration_input form={@form} field={:prep_minutes} label="Prep" />
-          <.duration_input form={@form} field={:cook_minutes} label="Cook" />
-          <.duration_input form={@form} field={:rest_minutes} label="Rest" />
-          <.mini
-            f={@form[:serve_offset_minutes]}
-            label="Serve"
-            type="select"
-            class="w-48"
-            options={serve_options(@dish.serve_offset_minutes)}
-          />
-          <.mini
-            :if={@dish.prep_minutes > 0}
-            f={@form[:prep_day]}
-            label="Prep"
-            type="select"
-            class="w-48"
-            options={MealDish.prep_day_options()}
-          />
-          <span class="hidden h-8 w-px self-center bg-base-300 sm:mx-1 sm:block" aria-hidden="true"></span>
-          <%= if @dish.method == :oven do %>
-            <.mini
-              f={@form[:temp]}
-              label="Temp"
-              type="number"
-              step="any"
-              class="w-28"
-              phx-debounce="500"
-            />
-            <.mini
-              f={@form[:temp_unit]}
-              label="Scale"
-              type="select"
-              class="w-36"
-              options={[{"Gas mark", :gas_mark}, {"°C", :celsius}, {"°F", :fahrenheit}]}
-            />
-            <.mini
-              f={@form[:oven_share]}
-              label="Space"
-              type="select"
-              class="w-44"
-              options={CookingScheduler.Meals.MealDish.oven_share_options()}
-            />
-            <.mini
-              f={@form[:appliance_id]}
-              label="Oven"
-              type="select"
-              class="w-48"
-              options={oven_options(@kitchen)}
-            />
-          <% end %>
-          <.mini
-            :if={@dish.method == :ring}
-            f={@form[:ring_size]}
-            label="Ring"
-            type="select"
-            class="w-36"
-            options={[{"Small", :small}, {"Medium", :medium}, {"Large", :large}]}
-          />
-          <.mini
-            :if={@dish.method == :appliance}
-            f={@form[:appliance_id]}
-            label="Appliance"
-            type="select"
-            class="w-48"
-            options={appliance_options(@kitchen)}
-          />
-        </div>
-
-        <div :if={@entry.issues != []} class="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <div :if={@entry.issues != []} class="flex flex-wrap items-center gap-1.5 px-3 pb-2">
           <span
             :for={issue <- @entry.issues}
             class="badge badge-warning badge-soft h-auto gap-1 whitespace-normal py-0.5 text-left"
@@ -755,34 +756,123 @@ defmodule CookingSchedulerWeb.PlanLive do
           </button>
         </div>
 
+        <%!-- settings: always in the form so autosave sees every field, shown when open --%>
         <div
-          id={"more-#{@dish.id}"}
-          style="display: none"
-          class="mt-3 grid gap-x-4 gap-y-2 border-t border-base-300 pt-3 sm:grid-cols-2"
+          id={"settings-#{@dish.id}"}
+          class={[
+            "grid gap-2.5 border-t border-base-300 px-3 pb-3 pt-3",
+            !@open && "hidden"
+          ]}
         >
-          <.input field={@form[:notes]} type="textarea" rows="2" label="Notes" phx-debounce="400" />
-          <div>
-            <.input
-              field={@form[:link]}
-              type="text"
-              label="Recipe link"
-              placeholder="https://…"
-              phx-debounce="400"
+          <.field_group label="Dish">
+            <.mini f={@form[:name]} label="Name" class="w-full max-w-md" phx-debounce="400" />
+          </.field_group>
+
+          <.field_group label="Timing">
+            <.duration_input form={@form} field={:prep_minutes} label="Prep" />
+            <.duration_input form={@form} field={:cook_minutes} label="Cook" />
+            <.duration_input form={@form} field={:rest_minutes} label="Rest" />
+            <.mini
+              :if={@dish.prep_minutes > 0}
+              f={@form[:prep_day]}
+              label="Prep when"
+              type="select"
+              class="w-52"
+              options={MealDish.prep_day_options()}
             />
-            <div class="flex flex-wrap items-center gap-x-6">
-              <.input field={@form[:ingredients_in]} type="checkbox" label="All ingredients in" />
-              <.input field={@form[:prepped]} type="checkbox" label="Prepped" />
-              <a
-                :if={@dish.link not in [nil, ""]}
-                href={@dish.link}
-                target="_blank"
-                rel="noopener"
-                class="link link-hover mb-2 inline-flex items-center gap-1 text-sm text-primary"
-              >
-                <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Open recipe
-              </a>
+            <.mini
+              f={@form[:serve_offset_minutes]}
+              label="Serve with"
+              type="select"
+              class="w-52"
+              options={serve_options(@dish.serve_offset_minutes)}
+            />
+          </.field_group>
+
+          <.field_group label={
+            if(@dish.method == :oven, do: "Oven", else: method_label(@dish.method))
+          }>
+            <%= if @dish.method == :oven do %>
+              <.mini
+                f={@form[:temp]}
+                label="Temp"
+                type="number"
+                step="any"
+                class="w-28"
+                phx-debounce="500"
+              />
+              <.mini
+                f={@form[:temp_unit]}
+                label="Scale"
+                type="select"
+                class="w-36"
+                options={[{"Gas mark", :gas_mark}, {"°C", :celsius}, {"°F", :fahrenheit}]}
+              />
+              <.mini
+                f={@form[:oven_share]}
+                label="Space"
+                type="select"
+                class="w-44"
+                options={MealDish.oven_share_options()}
+              />
+              <.mini
+                f={@form[:appliance_id]}
+                label="Oven"
+                type="select"
+                class="w-48"
+                options={oven_options(@kitchen)}
+              />
+            <% end %>
+            <.mini
+              :if={@dish.method == :ring}
+              f={@form[:ring_size]}
+              label="Ring"
+              type="select"
+              class="w-36"
+              options={[{"Small", :small}, {"Medium", :medium}, {"Large", :large}]}
+            />
+            <.mini
+              :if={@dish.method == :appliance}
+              f={@form[:appliance_id]}
+              label="Use"
+              type="select"
+              class="w-48"
+              options={appliance_options(@kitchen)}
+            />
+          </.field_group>
+
+          <.field_group label="Notes">
+            <div class="grid w-full gap-x-4 sm:grid-cols-2">
+              <.input
+                field={@form[:notes]}
+                type="textarea"
+                rows="2"
+                placeholder="Notes"
+                phx-debounce="400"
+              />
+              <div>
+                <.input
+                  field={@form[:link]}
+                  type="text"
+                  placeholder="Recipe link: https://…"
+                  phx-debounce="400"
+                />
+                <div class="flex flex-wrap items-center gap-x-6">
+                  <.input field={@form[:ingredients_in]} type="checkbox" label="All ingredients in" />
+                  <.input field={@form[:prepped]} type="checkbox" label="Prepped" />
+                  <a
+                    :if={@dish.link not in [nil, ""]}
+                    href={@dish.link}
+                    target="_blank"
+                    rel="noopener"
+                    class="link link-hover mb-2 inline-flex items-center gap-1 text-sm text-primary"
+                  >
+                    <.icon name="hero-arrow-top-right-on-square-micro" class="size-4" /> Open recipe
+                  </a>
+                </div>
+              </div>
             </div>
-          </div>
+          </.field_group>
         </div>
       </.form>
     </li>
@@ -1147,6 +1237,10 @@ defmodule CookingSchedulerWeb.PlanLive do
               form={card_form(e.dish, @invalid)}
               kitchen={@kitchen}
               fixes={Map.get(@fixes, e.dish.id, [])}
+              open={
+                MapSet.member?(@open, e.dish.id) or Map.has_key?(@invalid, e.dish.id) or
+                  e.dish.cook_minutes == 0
+              }
             />
           </ul>
         <% end %>

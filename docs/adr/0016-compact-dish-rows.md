@@ -1,6 +1,6 @@
 # 0016 – Plan screen: compact dish rows
 
-**Status:** accepted
+**Status:** accepted; row 2 superseded by 0026
 
 The Plan screen exists to add dishes and set when each one is prepped, cooked and rested.
 Dish cards had grown to two columns with stacked, labelled boxes, so only two or three dishes

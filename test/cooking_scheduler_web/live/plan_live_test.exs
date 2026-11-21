@@ -199,6 +199,21 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     refute has_element?(lv, "#add-dish-modal")
   end
 
+  test "rows are a summary until opened", %{conn: conn, meal: meal, path: path} do
+    {:ok, lv, _} = live(conn, path)
+    add_new_dish(lv, %{name: "Roast", method: :oven, temp: "7", cook_minutes: "1h"})
+    [dish] = dishes(meal)
+
+    assert has_element?(lv, "#toggle-dish-#{dish.id}", "1h cook")
+    assert has_element?(lv, "#settings-#{dish.id}.hidden")
+
+    lv |> element("#toggle-dish-#{dish.id}") |> render_click()
+    refute has_element?(lv, "#settings-#{dish.id}.hidden")
+
+    lv |> element("#toggle-dish-#{dish.id}") |> render_click()
+    assert has_element?(lv, "#settings-#{dish.id}.hidden")
+  end
+
   test "changes made on another screen show up here", %{conn: conn, meal: meal, path: path} do
     {:ok, lv, _} = live(conn, path)
     {:ok, other, _} = live(Phoenix.ConnTest.build_conn(), path)
