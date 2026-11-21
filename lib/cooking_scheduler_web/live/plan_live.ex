@@ -278,7 +278,7 @@ defmodule CookingSchedulerWeb.PlanLive do
   attr :serve, :integer, required: true
   attr :events, :list, default: []
 
-  # One strip per appliance: bar height is how full it is, across the cooking window.
+  # One block per appliance, split into slots: each dish gets its own bar across its time on the heat.
   defp kitchen_load(assigns) do
     start =
       assigns.load
@@ -301,7 +301,7 @@ defmodule CookingSchedulerWeb.PlanLive do
       <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-4">
         <h2 class="text-sm font-semibold">Kitchen load</h2>
         <p class="text-xs text-base-content/60">
-          How full each appliance is until serving. Gaps are free space; a longer rest frees the oven sooner.
+          Each dish has its own bar for its time on the heat. Dashed boxes are free oven space; a longer rest frees the oven sooner.
         </p>
       </div>
 
@@ -319,59 +319,101 @@ defmodule CookingSchedulerWeb.PlanLive do
 
         <%= for row <- @load do %>
           <div class="min-w-0">
-            <div class="truncate text-sm font-medium">{row.appliance.name}</div>
+            <div class={[
+              "truncate text-sm font-medium",
+              row.slots == [] && "text-base-content/50"
+            ]}>
+              {row.name}
+            </div>
             <div class={["text-xs", load_text(row)]}>{load_summary(row)}</div>
           </div>
           <div
-            id={"load-#{row.appliance.id}"}
-            class="relative h-10 rounded-lg bg-base-200"
+            id={"load-#{row.id}"}
+            class="relative rounded-lg bg-base-200 p-1"
           >
             <span
               :for={t <- @hours}
-              class="absolute inset-y-0 w-px bg-base-300"
+              class="pointer-events-none absolute inset-y-0 w-px bg-base-300"
               style={"left: #{pct(t - @start, @span)}%"}
             ></span>
             <div
-              :for={seg <- row.segments}
-              tabindex="0"
-              class="group absolute inset-y-0 outline-none hover:z-20 focus:z-20"
-              style={"left: #{pct(seg.from - @start, @span)}%; width: #{pct(seg.to - seg.from, @span)}%"}
+              id={"load-#{row.id}-slots"}
+              class="relative"
+              style={"height: #{slot_height(row)}rem"}
             >
               <div
-                class={[
-                  "absolute inset-x-0 bottom-0 rounded-sm transition group-hover:brightness-95 group-focus:brightness-95",
-                  load_color(row, seg)
-                ]}
-                style={"height: #{height(seg, row)}%"}
+                :if={slot_top(row) > row.capacity}
+                class="pointer-events-none absolute inset-x-0 z-10 border-t border-dashed border-error/70"
+                style={"bottom: #{pct(row.capacity, slot_top(row))}%"}
+                title="Oven full"
               >
               </div>
               <div
-                role="tooltip"
-                class={[
-                  "pointer-events-none invisible absolute bottom-full z-30 mb-2 w-max max-w-64 translate-y-1 rounded-xl border border-base-300 bg-base-100 p-3 text-left opacity-0 shadow-xl shadow-base-content/10 transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus:visible group-focus:translate-y-0 group-focus:opacity-100",
-                  tip_align(seg, @start, @span)
-                ]}
+                :for={
+                  {box, i} <-
+                    if(row.kind != :other or row.slots == [],
+                      do: Enum.with_index(Planner.free_space(row, @start, @serve)),
+                      else: []
+                    )
+                }
+                id={"load-free-#{row.id}-#{i}"}
+                class="pointer-events-none absolute p-px"
+                style={"left: #{pct(box.from - @start, @span)}%; width: #{pct(box.to - box.from, @span)}%; bottom: #{pct(box.offset, slot_top(row))}%; height: #{pct(box.units, slot_top(row))}%"}
               >
-                <div class="text-xs font-semibold tabular-nums text-base-content/60">
-                  {Duration.clock(Integer.mod(seg.from, 1440))} – {Duration.clock(
-                    Integer.mod(seg.to, 1440)
-                  )}
-                </div>
-                <ul class="mt-1.5 space-y-1">
-                  <li
-                    :for={e <- seg.dishes}
-                    class="flex items-baseline justify-between gap-4 text-sm"
-                  >
-                    <span class="font-medium">{e.dish.name}</span>
-                    <span :if={row.capacity > 1} class="text-xs text-base-content/50">
-                      {share_label(e.dish.oven_share)}
-                    </span>
-                  </li>
-                </ul>
-                <div :if={row.capacity > 1} class="mt-2 border-t border-base-300 pt-1.5 text-xs">
-                  <span class={load_text(%{row | peak: seg.used})}>
-                    {seg.used}/{row.capacity} twelfths · {round(seg.used / row.capacity * 100)}% full
+                <div class="flex h-full items-center justify-center overflow-hidden rounded-md border border-dashed border-success/50 bg-success/5 px-1 text-[10px] font-medium text-success/80">
+                  <span :if={box.units >= 2 or row.kind == :rings} class="truncate">
+                    {free_label(row, box.units)}
                   </span>
+                </div>
+              </div>
+              <div
+                :for={bar <- row.slots}
+                id={"load-bar-#{bar.entry.dish.id}"}
+                tabindex="0"
+                class="group absolute p-px outline-none hover:z-20 focus:z-20"
+                style={"left: #{pct(bar.entry.cook_at - @start, @span)}%; width: #{pct(bar.entry.out_at - bar.entry.cook_at, @span)}%; bottom: #{pct(bar.offset, slot_top(row))}%; height: #{pct(bar.units, slot_top(row))}%"}
+              >
+                <div class={[
+                  "flex h-full items-center gap-1 overflow-hidden rounded-md border px-1.5 text-xs font-medium shadow-sm transition duration-150 group-hover:-translate-y-px group-hover:shadow-md group-focus:ring-2 group-focus:ring-primary/40",
+                  bar_color(row, bar)
+                ]}>
+                  <.icon
+                    :if={bar.over?}
+                    name="hero-exclamation-triangle-micro"
+                    class="size-3.5 shrink-0"
+                  />
+                  <span class="truncate">{bar.entry.dish.name}</span>
+                  <span
+                    :if={row.kind == :oven}
+                    class="ml-auto shrink-0 pl-1 text-[10px] font-normal opacity-60"
+                  >
+                    {share_label(bar.entry.dish.oven_share)}
+                  </span>
+                </div>
+                <div
+                  role="tooltip"
+                  class={[
+                    "pointer-events-none invisible absolute bottom-full z-30 mb-2 w-max max-w-64 translate-y-1 rounded-xl border border-base-300 bg-base-100 p-3 text-left opacity-0 shadow-xl shadow-base-content/10 transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus:visible group-focus:translate-y-0 group-focus:opacity-100",
+                    tip_align(bar.entry.cook_at, bar.entry.out_at, @start, @span)
+                  ]}
+                >
+                  <div class="text-sm font-semibold">{bar.entry.dish.name}</div>
+                  <div class="mt-0.5 text-xs tabular-nums text-base-content/60">
+                    {Duration.clock(Integer.mod(bar.entry.cook_at, 1440))} – {Duration.clock(
+                      Integer.mod(bar.entry.out_at, 1440)
+                    )}
+                    <span :if={row.kind == :oven}>
+                      · {share_label(bar.entry.dish.oven_share)} of the oven
+                    </span>
+                    <span :if={row.kind == :rings and row.capacity > 1}>
+                      · on {bar.entry.resource.name}
+                    </span>
+                  </div>
+                  <div :if={bar.over?} class="mt-1.5 text-xs font-semibold text-error">
+                    {if row.kind == :oven,
+                      do: "Oven over capacity while this is in",
+                      else: "More dishes than rings while this is on"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -411,24 +453,45 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   defp pct(minutes, span), do: Float.round(minutes / span * 100, 2)
 
-  defp height(seg, row), do: min(round(seg.used / row.capacity * 100), 100) |> max(12)
+  # Full height in units: the appliance's capacity, or higher if it is overfilled.
+  defp slot_top(row),
+    do: Enum.reduce(row.slots, row.capacity, &max(&1.offset + &1.units, &2))
 
-  defp ratio(seg, row), do: seg.used / row.capacity
+  # A whole oven is 6rem tall (half a rem per twelfth); one-at-a-time appliances get 2rem.
+  # Idle appliances get a short row so the busy ones stand out.
+  defp slot_height(%{slots: []}), do: 2
+  defp slot_height(%{kind: :oven} = row), do: slot_top(row) * 0.5
+  defp slot_height(row), do: slot_top(row) * 2
 
-  defp load_color(%{capacity: 1}, _seg), do: "bg-info/60"
+  defp free_label(%{slots: []}, _units), do: "Free"
+  defp free_label(%{capacity: units}, units), do: "Free"
+  defp free_label(%{kind: :rings}, 1), do: "1 ring free"
+  defp free_label(%{kind: :rings}, units), do: "#{units} rings free"
 
-  defp load_color(row, seg) do
-    r = ratio(seg, row)
+  defp free_label(_row, units) do
+    g = Integer.gcd(units, 12)
+    "#{div(units, g)}/#{div(12, g)} free"
+  end
 
+  defp bar_color(_row, %{over?: true}), do: "border-error/60 bg-error/15 text-error"
+
+  defp bar_color(%{kind: kind}, _bar) when kind != :oven,
+    do: "border-info/40 bg-info/15 text-base-content group-hover:bg-info/25"
+
+  defp bar_color(_row, _bar),
+    do: "border-primary/40 bg-primary/15 text-base-content group-hover:bg-primary/25"
+
+  defp load_summary(%{slots: []}), do: "Not used"
+
+  defp load_summary(%{kind: :rings, capacity: n} = row) when n > 1 do
     cond do
-      r > 1 -> "bg-error"
-      r == 1 -> "bg-warning"
-      r >= 0.75 -> "bg-warning/50"
-      true -> "bg-success/60"
+      row.peak > n -> "Over capacity"
+      row.peak == n -> "All #{n} on at peak"
+      true -> "Up to #{row.peak} of #{n} on"
     end
   end
 
-  defp load_summary(%{capacity: 1} = row) do
+  defp load_summary(%{kind: kind} = row) when kind != :oven do
     "#{length(row.segments)} #{if length(row.segments) == 1, do: "stretch", else: "stretches"} in use"
   end
 
@@ -440,7 +503,8 @@ defmodule CookingSchedulerWeb.PlanLive do
     end
   end
 
-  defp load_text(%{capacity: 1}), do: "text-base-content/60"
+  defp load_text(%{kind: kind} = row) when kind != :oven,
+    do: if(row.peak > row.capacity, do: "font-semibold text-error", else: "text-base-content/60")
 
   defp load_text(row) do
     cond do
@@ -458,8 +522,8 @@ defmodule CookingSchedulerWeb.PlanLive do
   end
 
   # Keep tooltips on screen: anchor to the left/right edge near the ends of the strip.
-  defp tip_align(seg, start, span) do
-    mid = (seg.from + seg.to) / 2 - start
+  defp tip_align(from, to, start, span) do
+    mid = (from + to) / 2 - start
 
     cond do
       mid / span < 0.25 -> "left-0"
@@ -1202,7 +1266,12 @@ defmodule CookingSchedulerWeb.PlanLive do
         </div>
       </div>
 
-      <.kitchen_load :if={@load != []} load={@load} serve={@serve} events={@oven_events} />
+      <.kitchen_load
+        :if={Enum.any?(@load, &(&1.slots != []))}
+        load={@load}
+        serve={@serve}
+        events={@oven_events}
+      />
 
       <div
         :if={@problems != []}

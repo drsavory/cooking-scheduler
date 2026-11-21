@@ -64,22 +64,41 @@ defmodule CookingScheduler.Planner do
   @doc """
   How busy each appliance is over time, from planned entries.
 
-  Returns one map per appliance that has something in it, in kitchen order:
-  `%{appliance, capacity, peak, segments}`. Segments are consecutive stretches
-  with constant load: `%{from, to, used, dishes}`. Ovens are measured in
-  `MealDish.oven_units/1` against `MealDish.oven_capacity/0`; rings and other
-  appliances hold one thing at a time (capacity 1).
+  Returns one row per appliance: ovens first and then kitchen order, with idle ones (no
+  slots) after all the busy ones. Rings of the same size share a row (the first such ring's place), treated like one appliance with a
+  slot per ring:
+  `%{id, name, kind, appliances, capacity, peak, segments, slots}` where `kind` is `:oven`,
+  `:rings` or `:other` and `id` is a DOM-safe key. Segments are consecutive stretches with
+  constant load: `%{from, to, used, dishes}`. Slots are one bar per dish,
+  `%{entry, units, offset, over?}`: `units` tall (its share of the row) starting `offset`
+  units up, so a whole-oven dish fills the full height and a ring dish sits in its ring's slot.
+  Ovens are measured in `MealDish.oven_units/1` against `MealDish.oven_capacity/0`; a ring row
+  holds one dish per ring and other appliances hold one thing at a time.
   """
   def load(entries, kitchen) do
     placed = Enum.filter(entries, &(&1.resource && uses_equipment?(&1)))
 
-    for app <- kitchen,
-        mine = Enum.filter(placed, &(&1.resource.id == app.id)),
-        mine != [] do
-      capacity = if app.kind == :oven, do: MealDish.oven_capacity(), else: 1
+    for group <- load_groups(kitchen),
+        ids = MapSet.new(group, & &1.id),
+        mine = Enum.filter(placed, &MapSet.member?(ids, &1.resource.id)) do
+      [app | _] = group
+
+      kind =
+        case app.kind do
+          :oven -> :oven
+          :ring -> :rings
+          _ -> :other
+        end
+
+      capacity =
+        case kind do
+          :oven -> MealDish.oven_capacity()
+          :rings -> length(group)
+          :other -> 1
+        end
 
       weight = fn e ->
-        if app.kind == :oven, do: MealDish.oven_units(e.dish.oven_share), else: 1
+        if kind == :oven, do: MealDish.oven_units(e.dish.oven_share), else: 1
       end
 
       points = mine |> Enum.flat_map(&[&1.cook_at, &1.out_at]) |> Enum.uniq() |> Enum.sort()
@@ -94,8 +113,134 @@ defmodule CookingScheduler.Planner do
         |> Enum.reject(&(&1.dishes == []))
 
       peak = segments |> Enum.map(& &1.used) |> Enum.max(fn -> 0 end)
-      %{appliance: app, capacity: capacity, peak: peak, segments: segments}
+
+      # A ring dish's slot is the ring it is on.
+      fixed =
+        if kind == :rings,
+          do: fn e -> Enum.find_index(group, &(&1.id == e.resource.id)) end,
+          else: fn _ -> nil end
+
+      %{
+        id: if(kind == :rings, do: "rings-#{app.size}", else: "#{app.id}"),
+        name: load_name(kind, group),
+        kind: kind,
+        appliances: group,
+        capacity: capacity,
+        peak: peak,
+        segments: segments,
+        slots: slots(mine, segments, capacity, weight, fixed)
+      }
     end
+    # Unused appliances go to the bottom; the sort is stable, so ovens stay first in each half.
+    |> Enum.sort_by(&(&1.slots == []))
+  end
+
+  # Ovens, then everything else in kitchen order, with every ring of a size gathered at the first one's place.
+  defp load_groups(kitchen) do
+    rings = kitchen |> Enum.filter(&(&1.kind == :ring)) |> Enum.group_by(& &1.size)
+
+    kitchen
+    |> Enum.flat_map(fn
+      %Appliance{kind: :ring, size: size} = app ->
+        if hd(rings[size]).id == app.id, do: [rings[size]], else: []
+
+      app ->
+        [[app]]
+    end)
+    # Ovens first: they are what runs out. `sort_by` is stable, so kitchen order holds otherwise.
+    |> Enum.sort_by(fn [app | _] -> app.kind != :oven end)
+  end
+
+  defp load_name(:rings, [ring]), do: ring.name
+
+  defp load_name(:rings, [ring | _] = group),
+    do: "#{length(group)} #{Appliance.ring_name(ring.size)}s"
+
+  defp load_name(_kind, [app]), do: app.name
+
+  @doc """
+  The free space in a `load/2` row between `from` and `to`, as boxes in the same units as its
+  slots: `%{from, to, offset, units}`. Each box is a gap in the stack that stays open for its
+  whole time; boxes of the same gap that run on in time are merged.
+  """
+  def free_space(%{capacity: capacity, slots: bars}, from, to) do
+    points =
+      bars
+      |> Enum.flat_map(&[&1.entry.cook_at, &1.entry.out_at])
+      |> Enum.concat([from, to])
+      |> Enum.filter(&(&1 >= from and &1 <= to))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    points
+    |> Enum.zip(Enum.drop(points, 1))
+    |> Enum.flat_map(fn {a, b} ->
+      taken =
+        bars
+        |> Enum.filter(&(&1.entry.cook_at < b and &1.entry.out_at > a))
+        |> Enum.map(&{&1.offset, &1.offset + &1.units})
+        |> Enum.sort()
+
+      {gaps, top} =
+        Enum.reduce(taken, {[], 0}, fn {lo, hi}, {gaps, at} ->
+          gaps = if lo > at, do: [{at, lo} | gaps], else: gaps
+          {gaps, max(at, hi)}
+        end)
+
+      gaps = if top < capacity, do: [{top, capacity} | gaps], else: gaps
+
+      for {lo, hi} <- gaps,
+          hi > lo,
+          lo < capacity,
+          do: %{from: a, to: b, offset: lo, units: min(hi, capacity) - lo}
+    end)
+    |> Enum.sort_by(&{&1.offset, &1.units, &1.from})
+    |> Enum.chunk_while(
+      nil,
+      fn
+        box, nil ->
+          {:cont, box}
+
+        box, acc
+        when acc.offset == box.offset and acc.units == box.units and acc.to == box.from ->
+          {:cont, %{acc | to: box.to}}
+
+        box, acc ->
+          {:cont, acc, box}
+      end,
+      fn
+        nil -> {:cont, nil}
+        acc -> {:cont, acc, nil}
+      end
+    )
+    |> Enum.sort_by(&{&1.from, &1.offset})
+  end
+
+  # Places each dish as a bar in the appliance's space: `units` tall (its oven space, or 1 for
+  # one-at-a-time appliances) at the lowest `offset` that is free for its whole time on the
+  # heat. A whole-oven dish fills the full height; smaller ones stack. A dish is `over?` when
+  # the appliance is over capacity at any point while it is in; such bars can sit above
+  # `capacity`.
+  defp slots(entries, segments, capacity, weight, fixed) do
+    entries
+    |> Enum.sort_by(&{&1.cook_at, -weight.(&1), -&1.out_at, &1.dish.name})
+    |> Enum.reduce([], fn e, placed ->
+      units = weight.(e)
+      busy = Enum.filter(placed, &(&1.entry.cook_at < e.out_at and &1.entry.out_at > e.cook_at))
+
+      offset =
+        fixed.(e) ||
+          [0 | Enum.map(busy, &(&1.offset + &1.units))]
+          |> Enum.sort()
+          |> Enum.find(fn o ->
+            not Enum.any?(busy, &(&1.offset < o + units and &1.offset + &1.units > o))
+          end)
+
+      over? =
+        Enum.any?(segments, &(&1.used > capacity and &1.from < e.out_at and &1.to > e.cook_at))
+
+      placed ++ [%{entry: e, units: units, offset: offset, over?: over?}]
+    end)
   end
 
   defp timeline(%MealDish{} = d, meal_serve) do

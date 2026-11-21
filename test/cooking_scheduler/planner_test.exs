@@ -182,6 +182,51 @@ defmodule CookingScheduler.PlannerTest do
       assert Enum.map(row.segments, & &1.used) == [6, 10]
     end
 
+    test "gives each dish its own bar, as tall as its oven space" do
+      kitchen = [oven(1, "Oven")]
+      a = dish(1, cook_minutes: 120, oven_share: :half)
+      b = dish(2, cook_minutes: 60, oven_share: :third)
+      c = dish(3, cook_minutes: 30, oven_share: :third, rest_minutes: 90)
+
+      [row] = Planner.load(Planner.plan([a, b, c], @serve, kitchen), kitchen)
+
+      bars = Map.new(row.slots, &{&1.entry.dish.id, {&1.offset, &1.units}})
+      # a takes the bottom half; c is out before b goes in, so they share the space above.
+      assert bars == %{1 => {0, 6}, 3 => {6, 4}, 2 => {6, 4}}
+      refute Enum.any?(row.slots, & &1.over?)
+    end
+
+    test "free space is the gaps left in the oven, merged over time" do
+      kitchen = [oven(1, "Oven")]
+      a = dish(1, cook_minutes: 120, oven_share: :half)
+      b = dish(2, cook_minutes: 60, oven_share: :third)
+      c = dish(3, cook_minutes: 30, oven_share: :third, rest_minutes: 90)
+
+      [row] = Planner.load(Planner.plan([a, b, c], @serve, kitchen), kitchen)
+      free = Planner.free_space(row, @serve - 180, @serve)
+
+      assert %{from: @serve - 180, to: @serve - 120, offset: 0, units: 12} in free
+      # Above c, then above b, the top sixth is free.
+      assert %{from: @serve - 120, to: @serve - 90, offset: 10, units: 2} in free
+      assert %{from: @serve - 60, to: @serve, offset: 10, units: 2} in free
+      # Between c coming out and b going in, the whole top half is free.
+      assert %{from: @serve - 90, to: @serve - 60, offset: 6, units: 6} in free
+      assert length(free) == 4
+    end
+
+    test "flags the dishes in an overfull oven" do
+      kitchen = [oven(1, "Oven")]
+      a = dish(1, cook_minutes: 60, oven_share: :full, appliance_id: 1)
+      b = dish(2, cook_minutes: 60, oven_share: :half, appliance_id: 1)
+
+      [row] = Planner.load(Planner.plan([a, b], @serve, kitchen), kitchen)
+
+      bars = Map.new(row.slots, &{&1.entry.dish.id, {&1.offset, &1.units}})
+      # The whole-oven dish fills the oven; the other sits above the full line.
+      assert bars == %{1 => {0, 12}, 2 => {12, 6}}
+      assert Enum.all?(row.slots, & &1.over?)
+    end
+
     test "a longer rest frees the oven sooner" do
       kitchen = [oven(1, "Oven")]
       long = dish(1, cook_minutes: 60, oven_share: :full)
@@ -195,12 +240,47 @@ defmodule CookingScheduler.PlannerTest do
       assert List.last(rested.segments).to == @serve - 30
     end
 
-    test "rings and appliances hold one thing at a time; idle appliances are left out" do
+    test "ovens come first, then the rest in kitchen order" do
+      kitchen = [ring(1, :small), oven(2, "Main"), ring(3, :large), oven(4, "Top")]
+      rows = Planner.load([], kitchen)
+      assert Enum.map(rows, & &1.id) == ["2", "4", "rings-small", "rings-large"]
+    end
+
+    test "unused appliances go to the bottom, ovens still first among them" do
+      kitchen = [ring(1, :small), oven(2, "Main"), ring(3, :large), oven(4, "Top")]
+      hob = dish(1, method: :ring, ring_size: :large)
+      rows = Planner.load(Planner.plan([hob], @serve, kitchen), kitchen)
+      assert Enum.map(rows, & &1.id) == ["rings-large", "2", "4", "rings-small"]
+    end
+
+    test "rings of the same size share a row, a slot per ring" do
+      kitchen = [ring(1, :medium), ring(2, :large), ring(3, :medium)]
+      a = dish(1, method: :ring, ring_size: :medium, cook_minutes: 30)
+      b = dish(2, method: :ring, ring_size: :medium, cook_minutes: 20)
+
+      assert [row, _large] = Planner.load(Planner.plan([a, b], @serve, kitchen), kitchen)
+      assert row.id == "rings-medium"
+      assert row.name == "2 Medium rings"
+      assert row.capacity == 2
+      assert row.peak == 2
+      # Each dish sits in the slot of the ring it is on.
+      assert row.slots |> Enum.map(&{&1.offset, &1.entry.resource.id}) |> Enum.sort() ==
+               [{0, 1}, {1, 3}]
+
+      assert %{offset: 0, units: 2} = hd(Planner.free_space(row, @serve - 60, @serve))
+    end
+
+    test "rings and appliances hold one thing at a time; idle appliances have no slots" do
       kitchen = [oven(1, "Oven"), ring(2, :large)]
       hob = dish(1, method: :ring, ring_size: :large)
 
-      assert [row] = Planner.load(Planner.plan([hob], @serve, kitchen), kitchen)
-      assert row.appliance.id == 2
+      assert [row, idle] = Planner.load(Planner.plan([hob], @serve, kitchen), kitchen)
+      assert idle.id == "1"
+      assert idle.slots == []
+      assert idle.peak == 0
+      assert [%{from: 600, to: 720, offset: 0, units: 12}] = Planner.free_space(idle, 600, 720)
+      assert row.id == "rings-large"
+      assert row.kind == :rings
       assert row.capacity == 1
       assert row.peak == 1
     end

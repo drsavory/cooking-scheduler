@@ -247,6 +247,7 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     lv |> element("#start-from-last-year") |> render_click()
     assert has_element?(lv, "#kitchen-load")
     assert has_element?(lv, ~s|#kitchen-load [id^="load-"]|)
+    assert has_element?(lv, ~s|#kitchen-load [id^="load-bar-"]|)
   end
 
   describe "courses and the run sheet" do
