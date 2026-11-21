@@ -443,6 +443,14 @@ defmodule CookingSchedulerWeb.CookLive do
           >
             <.icon name="hero-fire-micro" class="size-3" /> {temp_label(@dish)}
           </span>
+          <span
+            :if={@task.kind == :out and MealDish.done_temp_text(@dish)}
+            id={"done-temp-#{@dish.id}"}
+            class="badge badge-accent badge-soft badge-sm"
+            title="Check with a probe in the thickest part"
+          >
+            <.icon name="hero-beaker-micro" class="size-3" /> {MealDish.done_temp_text(@dish)}
+          </span>
           <span :if={@task.kind == :out and @dish.rest_minutes > 0} class="badge badge-ghost badge-sm">
             then rest {Duration.format(@dish.rest_minutes)}
           </span>
@@ -507,6 +515,14 @@ defmodule CookingSchedulerWeb.CookLive do
         </span>
       </div>
       <progress class="progress progress-primary mt-3 w-full" value={@live.progress} max="100"></progress>
+      <p
+        :if={MealDish.done_temp_text(@dish)}
+        id={"cooking-done-temp-#{@dish.id}"}
+        class="mt-2 flex items-center gap-1 text-xs text-base-content/70"
+      >
+        <.icon name="hero-beaker-micro" class="size-3.5 text-accent" />
+        Done at {MealDish.done_temp_text(@dish)}
+      </p>
       <div class="mt-2 flex items-baseline justify-between text-sm">
         <span>Out at <b class="tabular-nums">{Duration.clock(@live.out_at)}</b></span>
         <span class={[@live.out_at < @now && "font-semibold text-error"]}>

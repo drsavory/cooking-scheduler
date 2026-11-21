@@ -25,6 +25,23 @@ defmodule CookingScheduler.Photos do
   defp list_by(where), do: Repo.all(from p in Photo, where: ^where, order_by: p.id)
 
   @doc """
+  Every photo of these meals, their own and their dishes', as
+  `%{meal_id => [%{photo: photo, caption: caption}]}`: the meal's own photos first (captioned
+  nil), then each dish's in dish order (captioned with the dish's name). For flicking through
+  a meal on the home page (ADR 0032).
+  """
+  def by_meal(meal_ids) do
+    Repo.all(
+      from p in Photo,
+        left_join: md in assoc(p, :meal_dish),
+        where: p.meal_id in ^meal_ids or md.meal_id in ^meal_ids,
+        order_by: [asc_nulls_first: md.id, asc: p.id],
+        select: {coalesce(p.meal_id, md.meal_id), p, md.name}
+    )
+    |> Enum.group_by(&elem(&1, 0), fn {_, photo, caption} -> %{photo: photo, caption: caption} end)
+  end
+
+  @doc """
   Photos of a dish as `{photo, meal}` pairs, newest meal first. For a library `Dish` that is
   every photo of every meal dish copied from it, so a dish's pictures build up across meals;
   for a `MealDish` it is just that dish's own.

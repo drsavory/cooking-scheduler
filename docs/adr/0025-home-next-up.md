@@ -20,4 +20,5 @@ last year's. A new meal was always "New meal", dated today, for 13:30.
 
 ## Consequences
 
-- The meal grid below is unchanged and remains the history.
+- The meal grid below is unchanged and remains the history. (Superseded by ADR 0031: coming
+  up and past meals.)

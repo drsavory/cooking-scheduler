@@ -471,6 +471,60 @@ defmodule CookingSchedulerWeb.DishLive do
                   phx-debounce="400"
                 />
                 <.box
+                  :if={@editing or @dish.done_temp}
+                  locked={not @editing}
+                  f={@dish_form[:done_temp]}
+                  label="Done inside at"
+                  type="number"
+                  step="any"
+                  placeholder="74"
+                  phx-debounce="400"
+                />
+                <.box
+                  :if={@editing or @dish.done_temp}
+                  locked={not @editing}
+                  f={@dish_form[:done_temp_unit]}
+                  label="Probe in"
+                  type="select"
+                  options={MealDish.done_temp_unit_options()}
+                />
+                <%!-- Sized dishes (ADR 0029): the rule on the library dish, a weight per meal --%>
+                <%= if meal_dish?(@dish) do %>
+                  <.box
+                    :if={MealDish.sized?(@dish)}
+                    locked={not @editing}
+                    f={@dish_form[:size]}
+                    label={"Weight (#{@dish.size_unit || :kg})"}
+                    placeholder="5.2"
+                    phx-debounce="400"
+                  />
+                <% else %>
+                  <.box
+                    :if={@editing or MealDish.sized?(@dish)}
+                    locked={not @editing}
+                    f={@dish_form[:minutes_per_size]}
+                    label={"Cook per #{@dish_form[:size_unit].value || :kg}"}
+                    placeholder="40m"
+                    phx-debounce="400"
+                  />
+                  <.box
+                    :if={@editing or MealDish.sized?(@dish)}
+                    locked={not @editing}
+                    f={@dish_form[:base_minutes]}
+                    label="Plus"
+                    placeholder="0m"
+                    phx-debounce="400"
+                  />
+                  <.box
+                    :if={@editing or MealDish.sized?(@dish)}
+                    locked={not @editing}
+                    f={@dish_form[:size_unit]}
+                    label="Weighed in"
+                    type="select"
+                    options={MealDish.size_unit_options()}
+                  />
+                <% end %>
+                <.box
                   locked={not @editing}
                   f={@dish_form[:serve_offset_minutes]}
                   label="Course"
@@ -583,6 +637,9 @@ defmodule CookingSchedulerWeb.DishLive do
                   </span>
                 </div>
                 <div class="mt-0.5 flex flex-wrap gap-x-3 text-xs text-base-content/70">
+                  <span :if={h.meal_dish.size} class="font-semibold">
+                    {MealDish.size_text(h.meal_dish.size, h.meal_dish.size_unit)}
+                  </span>
                   <span>Planned {Duration.format(h.meal_dish.cook_minutes)}, took {Duration.format(
                     Meals.actual_cook(h.meal_dish)
                   )}</span>

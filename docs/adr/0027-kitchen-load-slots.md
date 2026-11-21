@@ -21,8 +21,9 @@ height.
 
 Hob rings of the same size share one row, treated like an oven with a slot per ring
 ("2 Medium rings"). Each dish sits in the slot of the ring it is actually on, the row says
-how many are on at peak ("Up to 1 of 2 on", "All 2 on at peak"), and free rings show as
-dashed boxes ("1 ring free").
+how many are on at peak ("Up to 1 of 2 on", "All 2 on at peak"), and each free ring shows
+as its own dashed box ("Ring free"). Neighbouring free rings are never merged into one box,
+and an unused ring row keeps a lane per ring, so 2 rings always look like 2.
 
 - Oven bars show the dish name and its oven space. Hob and other appliance bars use a
   separate tint.

@@ -107,4 +107,34 @@ defmodule CookingSchedulerWeb.DishFormLiveTest do
 
     assert [%{serve_offset_minutes: 60, prep_day: :day_before}] = Meals.list_dishes()
   end
+
+  test "a dish can be cooked by weight and done at an inside temperature", %{conn: conn} do
+    {:ok, lv, _} = live(conn, ~p"/dishes/new")
+    refute has_element?(lv, "#dish_minutes_per_size")
+    lv |> element("#toggle-sizing") |> render_click()
+
+    lv
+    |> form("#dish-form",
+      dish: %{
+        name: "Roast turkey",
+        temp: "4",
+        minutes_per_size: "20m",
+        base_minutes: "1h 30m",
+        size_unit: "lb",
+        done_temp: "165",
+        done_temp_unit: "fahrenheit"
+      }
+    )
+    |> render_submit()
+
+    assert [
+             %{
+               minutes_per_size: 20,
+               base_minutes: 90,
+               size_unit: :lb,
+               done_temp: 165.0,
+               done_temp_unit: :fahrenheit
+             }
+           ] = Meals.list_dishes()
+  end
 end

@@ -31,6 +31,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
      |> assign(:dish, dish)
      |> assign(:params, %{})
      |> assign(:importing, false)
+     |> assign(:by_weight, false)
      |> assign(:imported, [])
      |> assign(:form, to_form(Meals.change_dish(dish)))}
   end
@@ -54,6 +55,9 @@ defmodule CookingSchedulerWeb.DishFormLive do
         {:noreply, assign(socket, :form, to_form(changeset))}
     end
   end
+
+  def handle_event("toggle_sizing", _params, socket),
+    do: {:noreply, update(socket, :by_weight, &(!&1))}
 
   def handle_event("cancel", _params, socket) do
     if socket.parent_pid, do: send(socket.parent_pid, :close_add_dish)
@@ -121,8 +125,12 @@ defmodule CookingSchedulerWeb.DishFormLive do
   defp after_save(%{assigns: %{meal: nil}} = socket, dish),
     do: push_navigate(socket, to: ~p"/dishes/#{dish.id}")
 
+  # A sized dish needs its weight first, which the parent's picker asks for (ADR 0029).
   defp after_save(%{assigns: %{meal: meal}} = socket, dish) do
-    send(socket.parent_pid, {:new_dish, dish, Meals.add_dish_to_meal(meal, dish)})
+    if MealDish.sized?(dish),
+      do: send(socket.parent_pid, {:new_sized_dish, dish}),
+      else: send(socket.parent_pid, {:new_dish, dish, Meals.add_dish_to_meal(meal, dish)})
+
     socket
   end
 
@@ -154,6 +162,7 @@ defmodule CookingSchedulerWeb.DishFormLive do
   attr :embedded, :boolean, required: true
   attr :importing, :boolean, default: false
   attr :imported, :list, default: []
+  attr :by_weight, :boolean, default: false
 
   defp dish_form(assigns) do
     ~H"""
@@ -221,6 +230,61 @@ defmodule CookingSchedulerWeb.DishFormLive do
         <.duration field={@form[:prep_minutes]} label="Prep" />
         <.duration field={@form[:cook_minutes]} label="Cook" />
         <.duration field={@form[:rest_minutes]} label="Rest" />
+      </div>
+
+      <div class="grid grid-cols-[1fr_auto] gap-x-4 sm:grid-cols-[12rem_7rem]">
+        <.input
+          field={@form[:done_temp]}
+          type="number"
+          step="any"
+          label="Done when the inside is"
+          placeholder="Optional, e.g. 74"
+          phx-debounce="400"
+        />
+        <.input
+          field={@form[:done_temp_unit]}
+          type="select"
+          label="Scale"
+          options={MealDish.done_temp_unit_options()}
+        />
+      </div>
+
+      <%!-- Sized dishes (ADR 0029): the cook time comes from the weight, asked for each meal --%>
+      <div
+        id="dish-sizing"
+        class="mb-4 rounded-2xl border border-base-300 bg-base-200/40 px-4 py-2"
+      >
+        <button
+          type="button"
+          id="toggle-sizing"
+          phx-click="toggle_sizing"
+          aria-expanded={to_string(@by_weight)}
+          class="flex w-full items-center gap-2 py-0.5 text-left text-sm font-semibold"
+        >
+          <.icon name="hero-scale-micro" class="size-4 text-base-content/60" />
+          Cook time depends on the weight?
+          <span class="font-normal text-base-content/50">e.g. a turkey or a joint</span>
+          <.icon
+            name="hero-chevron-down-micro"
+            class={["ml-auto size-4 transition", @by_weight && "rotate-180"]}
+          />
+        </button>
+        <div :if={@by_weight} class="pop-in pt-2">
+          <p class="mb-3 text-xs text-base-content/60">
+            You'll be asked for the weight each time it goes into a meal, and the cook time is
+            worked out from it.
+          </p>
+          <div class="grid grid-cols-3 gap-x-4">
+            <.duration field={@form[:minutes_per_size]} label="Per kg or lb" placeholder="40m" />
+            <.duration field={@form[:base_minutes]} label="Plus" placeholder="20m" />
+            <.input
+              field={@form[:size_unit]}
+              type="select"
+              label="Weighed in"
+              options={MealDish.size_unit_options()}
+            />
+          </div>
+        </div>
       </div>
 
       <div class="grid gap-x-4 sm:grid-cols-2">
@@ -296,7 +360,13 @@ defmodule CookingSchedulerWeb.DishFormLive do
   @impl true
   def render(%{meal: %Meals.Meal{}} = assigns) do
     ~H"""
-    <.dish_form form={@form} embedded={true} importing={@importing} imported={@imported} />
+    <.dish_form
+      form={@form}
+      embedded={true}
+      importing={@importing}
+      imported={@imported}
+      by_weight={@by_weight}
+    />
     """
   end
 
@@ -314,7 +384,13 @@ defmodule CookingSchedulerWeb.DishFormLive do
         A dish idea you can drop into any future meal. Each meal gets its own copy.
       </p>
 
-      <.dish_form form={@form} embedded={false} importing={@importing} imported={@imported} />
+      <.dish_form
+        form={@form}
+        embedded={false}
+        importing={@importing}
+        imported={@imported}
+        by_weight={@by_weight}
+      />
     </Layouts.app>
     """
   end

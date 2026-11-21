@@ -14,6 +14,8 @@ defmodule CookingSchedulerWeb.PlanLive do
      |> assign(:invalid, %{})
      |> assign(:open, MapSet.new())
      |> assign(:adding, nil)
+     |> assign(:sizing, nil)
+     |> assign(:histories, %{})
      |> assign(:saved_query, "")
      |> assign(:from_meal, nil)
      |> assign(
@@ -82,10 +84,73 @@ defmodule CookingSchedulerWeb.PlanLive do
   @impl true
   def handle_event("open_add", _params, socket) do
     tab = if socket.assigns.saved == [], do: :new, else: :pick
-    {:noreply, socket |> assign(:adding, tab) |> assign(:saved_query, "")}
+
+    # Past versions of each sized dish, for the picker (ADR 0029).
+    histories =
+      for d <- socket.assigns.saved,
+          MealDish.sized?(d),
+          into: %{},
+          do: {d.id, Meals.dish_history(d)}
+
+    {:noreply,
+     socket
+     |> assign(:adding, tab)
+     |> assign(:sizing, nil)
+     |> assign(:histories, histories)
+     |> assign(:saved_query, "")}
   end
 
   def handle_event("close_add", _params, socket), do: {:noreply, assign(socket, :adding, nil)}
+
+  # Picking a sized dish asks for its weight first, and which version to start from.
+  def handle_event("size_saved", %{"id" => id}, socket) do
+    dish = Meals.get_dish!(id)
+    history = Map.get(socket.assigns.histories, dish.id, [])
+    size = Meals.suggested_size(dish, history)
+
+    {:noreply,
+     assign(socket, :sizing, %{
+       dish: dish,
+       history: history,
+       weight: if(size, do: MealDish.size_number(size), else: ""),
+       from: ""
+     })}
+  end
+
+  def handle_event("unsize", _params, socket), do: {:noreply, assign(socket, :sizing, nil)}
+
+  def handle_event("size_change", %{"sizing" => params}, socket) do
+    {:noreply,
+     update(socket, :sizing, fn s ->
+       %{s | weight: params["weight"] || s.weight, from: params["from"] || s.from}
+     end)}
+  end
+
+  def handle_event("add_sized", %{"sizing" => params}, socket) do
+    %{dish: dish, history: history} = socket.assigns.sizing
+    from = Enum.find(history, &(to_string(&1.meal_dish.id) == params["from"]))
+
+    case parse_size(params["weight"]) do
+      {:ok, size} ->
+        opts = [size: size, from: from && from.meal_dish]
+
+        case Meals.add_dish_to_meal(socket.assigns.meal, dish, opts) do
+          {:ok, _} ->
+            {:noreply,
+             socket
+             |> assign(adding: nil, sizing: nil)
+             |> put_flash(:info, "#{dish.name} added")
+             |> load()}
+
+          {:error, _} ->
+            {:noreply,
+             put_flash(socket, :error, "#{dish.name} can't be added as it is: check its details")}
+        end
+
+      :error ->
+        {:noreply, update(socket, :sizing, &Map.put(&1, :weight, params["weight"] || ""))}
+    end
+  end
 
   def handle_event("add_tab", %{"tab" => "new"}, socket),
     do: {:noreply, assign(socket, :adding, :new)}
@@ -123,6 +188,11 @@ defmodule CookingSchedulerWeb.PlanLive do
         else: MapSet.put(socket.assigns.open, id)
 
     {:noreply, assign(socket, :open, open)}
+  end
+
+  # Clicking a dish on the Kitchen load jumps to its row and opens it (ADR 0028).
+  def handle_event("show_dish", %{"id" => id}, socket) do
+    {:noreply, update(socket, :open, &MapSet.put(&1, id))}
   end
 
   # A planner suggestion, applied to the dish (ADR 0020).
@@ -210,6 +280,12 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   def handle_info(:close_add_dish, socket), do: {:noreply, assign(socket, :adding, nil)}
 
+  # A new sized dish isn't in the meal yet: it goes to the weight step (ADR 0029).
+  def handle_info({:new_sized_dish, dish}, socket) do
+    socket = socket |> load() |> assign(:adding, :pick) |> assign(:histories, %{})
+    handle_event("size_saved", %{"id" => to_string(dish.id)}, socket)
+  end
+
   def handle_info({:new_dish, dish, {:ok, _meal_dish}}, socket) do
     {:noreply, socket |> assign(:adding, nil) |> put_flash(:info, "#{dish.name} added") |> load()}
   end
@@ -224,6 +300,16 @@ defmodule CookingSchedulerWeb.PlanLive do
      )
      |> load()}
   end
+
+  # A typed weight: "5.2", "5,2" or "5". Anything else, or out of range, is an error.
+  defp parse_size(text) when is_binary(text) do
+    case text |> String.trim() |> String.replace(",", ".") |> Float.parse() do
+      {size, ""} when size > 0 and size < 100 -> {:ok, size}
+      _ -> :error
+    end
+  end
+
+  defp parse_size(_), do: :error
 
   # Library dishes matching the picker's search box.
   defp matching_saved(saved, ""), do: saved
@@ -366,11 +452,19 @@ defmodule CookingSchedulerWeb.PlanLive do
                   </span>
                 </div>
               </div>
-              <div
+              <a
                 :for={bar <- row.slots}
                 id={"load-bar-#{bar.entry.dish.id}"}
-                tabindex="0"
-                class="group absolute p-px outline-none hover:z-20 focus:z-20"
+                href={"#dish-card-#{bar.entry.dish.id}"}
+                phx-click={
+                  JS.push("show_dish", value: %{id: bar.entry.dish.id})
+                  |> JS.transition({"ring-2 ring-primary/50", "", ""},
+                    to: "#dish-card-#{bar.entry.dish.id}",
+                    time: 1200
+                  )
+                }
+                aria-label={"Go to #{bar.entry.dish.name}"}
+                class="group absolute cursor-pointer p-px outline-none hover:z-20 focus:z-20"
                 style={"left: #{pct(bar.entry.cook_at - @start, @span)}%; width: #{pct(bar.entry.out_at - bar.entry.cook_at, @span)}%; bottom: #{pct(bar.offset, slot_top(row))}%; height: #{pct(bar.units, slot_top(row))}%"}
               >
                 <div class={[
@@ -415,7 +509,7 @@ defmodule CookingSchedulerWeb.PlanLive do
                       else: "More dishes than rings while this is on"}
                   </div>
                 </div>
-              </div>
+              </a>
             </div>
           </div>
         <% end %>
@@ -459,14 +553,15 @@ defmodule CookingSchedulerWeb.PlanLive do
 
   # A whole oven is 6rem tall (half a rem per twelfth); one-at-a-time appliances get 2rem.
   # Idle appliances get a short row so the busy ones stand out.
+  # Idle rows stay short, but an idle ring row keeps a lane per ring so 2 rings look like 2.
+  defp slot_height(%{slots: [], kind: :rings, capacity: n}), do: max(n, 2) * 1.25
   defp slot_height(%{slots: []}), do: 2
   defp slot_height(%{kind: :oven} = row), do: slot_top(row) * 0.5
   defp slot_height(row), do: slot_top(row) * 2
 
   defp free_label(%{slots: []}, _units), do: "Free"
   defp free_label(%{capacity: units}, units), do: "Free"
-  defp free_label(%{kind: :rings}, 1), do: "1 ring free"
-  defp free_label(%{kind: :rings}, units), do: "#{units} rings free"
+  defp free_label(%{kind: :rings}, _units), do: "Ring free"
 
   defp free_label(_row, units) do
     g = Integer.gcd(units, 12)
@@ -668,12 +763,14 @@ defmodule CookingSchedulerWeb.PlanLive do
   # What a closed row says about the dish's settings, so it doesn't need its inputs on show.
   defp summary(d) do
     [
+      MealDish.sized?(d) && MealDish.size_text(d.size, d.size_unit),
       d.prep_minutes > 0 && "#{Duration.format(d.prep_minutes)} prep#{prep_when(d.prep_day)}",
       if(d.cook_minutes > 0,
         do: "#{Duration.format(d.cook_minutes)} cook",
         else: "No cooking time"
       ),
       d.rest_minutes > 0 && "#{Duration.format(d.rest_minutes)} rest",
+      MealDish.done_temp_text(d),
       d.method == :oven && d.temp && temp_text({d.temp, d.temp_unit}),
       d.method == :oven && share_text(d.oven_share),
       d.method == :ring && d.ring_size &&
@@ -724,7 +821,7 @@ defmodule CookingSchedulerWeb.PlanLive do
     <li
       id={"dish-card-#{@dish.id}"}
       class={[
-        "pop-in rounded-xl border bg-base-100/90 shadow-sm backdrop-blur transition",
+        "pop-in scroll-mt-28 rounded-xl border bg-base-100/90 shadow-sm backdrop-blur transition",
         @open && "border-primary/30 shadow-md",
         !@open && "border-base-300 hover:border-base-content/20 hover:shadow-md"
       ]}
@@ -832,8 +929,36 @@ defmodule CookingSchedulerWeb.PlanLive do
             <.mini f={@form[:name]} label="Name" class="w-full max-w-md" phx-debounce="400" />
           </.field_group>
 
+          <.field_group label="Done when">
+            <.mini
+              f={@form[:done_temp]}
+              label="Inside temp"
+              type="number"
+              step="any"
+              placeholder="74"
+              class="w-28"
+              phx-debounce="500"
+            />
+            <.mini
+              f={@form[:done_temp_unit]}
+              label="Scale"
+              type="select"
+              class="w-24"
+              options={MealDish.done_temp_unit_options()}
+            />
+          </.field_group>
+
           <.field_group label="Timing">
             <.duration_input form={@form} field={:prep_minutes} label="Prep" />
+            <.mini
+              :if={MealDish.sized?(@dish)}
+              f={@form[:size]}
+              label={"Weight (#{@dish.size_unit || :kg})"}
+              inputmode="decimal"
+              class="w-24"
+              phx-debounce="500"
+              title={"Sets the cook time: #{MealDish.rule_text(@dish)}"}
+            />
             <.duration_input form={@form} field={:cook_minutes} label="Cook" />
             <.duration_input form={@form} field={:rest_minutes} label="Rest" />
             <.mini
@@ -943,6 +1068,201 @@ defmodule CookingSchedulerWeb.PlanLive do
     """
   end
 
+  attr :sizing, :map, required: true
+
+  # A sized dish's weight step (ADR 0029): the weight (last time's to start with), the cook
+  # time it gives, and which version to start from: the saved recipe or a past one.
+  defp sizing_panel(assigns) do
+    %{dish: dish, weight: weight} = assigns.sizing
+
+    cook =
+      case parse_size(weight) do
+        {:ok, size} -> MealDish.cook_for_size(dish, size)
+        :error -> nil
+      end
+
+    assigns = assign(assigns, dish: dish, cook: cook, invalid: weight != "" and is_nil(cook))
+
+    ~H"""
+    <div id="sizing-panel" class="pop-in">
+      <button
+        type="button"
+        id="sizing-back"
+        phx-click="unsize"
+        class="mb-3 inline-flex items-center gap-1 text-sm text-base-content/60 transition hover:text-primary"
+      >
+        <.icon name="hero-arrow-left-micro" class="size-4" /> Your dishes
+      </button>
+
+      <.form
+        for={%{}}
+        as={:sizing}
+        id="sizing-form"
+        phx-change="size_change"
+        phx-submit="add_sized"
+      >
+        <div class="flex items-center gap-3">
+          <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+            <.icon name="hero-scale" class="size-5" />
+          </span>
+          <div class="min-w-0">
+            <h3 class="truncate text-base font-bold">{@dish.name}</h3>
+            <p class="text-xs text-base-content/60">{MealDish.rule_text(@dish)}</p>
+          </div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <label class="grid gap-1">
+            <span class="ps-1 text-xs font-medium text-base-content/60">How heavy is it?</span>
+            <span class={["input w-40", @invalid && "input-error"]}>
+              <input
+                type="text"
+                inputmode="decimal"
+                id="sizing-weight"
+                name="sizing[weight]"
+                value={@sizing.weight}
+                placeholder="5.2"
+                autocomplete="off"
+                phx-debounce="200"
+                phx-mounted={JS.focus()}
+                class="w-full text-lg font-bold tabular-nums"
+              />
+              <span class="text-sm text-base-content/50">{@dish.size_unit || :kg}</span>
+            </span>
+          </label>
+          <div
+            id="sizing-cook"
+            class={[
+              "rounded-xl px-3 py-2 text-sm transition",
+              @cook && "bg-primary/10 text-primary",
+              !@cook && "bg-base-200 text-base-content/50"
+            ]}
+          >
+            <%= cond do %>
+              <% @cook -> %>
+                <span class="font-bold tabular-nums">{Duration.format(@cook)}</span> cook
+              <% @invalid -> %>
+                Type a weight, like 5.2
+              <% true -> %>
+                Cook time follows the weight
+            <% end %>
+          </div>
+        </div>
+
+        <fieldset :if={@sizing.history != []} class="mt-5">
+          <legend class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+            Start from
+          </legend>
+          <div id="sizing-versions" class="grid gap-1.5">
+            <.version_option
+              id="version-saved"
+              value=""
+              checked={@sizing.from == ""}
+              title="Your saved recipe"
+              detail="Its notes, temperature and ingredients as they are now"
+            />
+            <.version_option
+              :for={h <- @sizing.history}
+              id={"version-#{h.meal_dish.id}"}
+              value={to_string(h.meal_dish.id)}
+              checked={@sizing.from == to_string(h.meal_dish.id)}
+              title={h.meal.name}
+              detail={version_detail(h)}
+              note={h.meal_dish.next_time}
+              late={h.lateness}
+            />
+          </div>
+        </fieldset>
+
+        <div class="mt-5 flex justify-end">
+          <button
+            id="add-sized"
+            type="submit"
+            disabled={is_nil(@cook)}
+            class="btn btn-primary rounded-full"
+          >
+            <.icon name="hero-plus-micro" class="size-4" /> Add to meal
+          </button>
+        </div>
+      </.form>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :value, :string, required: true
+  attr :checked, :boolean, required: true
+  attr :title, :string, required: true
+  attr :detail, :string, required: true
+  attr :note, :string, default: nil
+  attr :late, :integer, default: nil
+
+  defp version_option(assigns) do
+    ~H"""
+    <label
+      id={@id}
+      class={[
+        "flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 transition",
+        @checked && "border-primary/50 bg-primary/5 shadow-sm",
+        !@checked && "border-base-300 bg-base-100/70 hover:border-base-content/20"
+      ]}
+    >
+      <input
+        type="radio"
+        name="sizing[from]"
+        value={@value}
+        checked={@checked}
+        class="radio radio-primary radio-sm mt-0.5"
+      />
+      <span class="min-w-0 flex-1">
+        <span class="flex flex-wrap items-baseline gap-x-2">
+          <span class="font-semibold">{@title}</span>
+          <span
+            :if={@late}
+            class={[
+              "text-xs",
+              @late > 0 && "font-semibold text-warning",
+              @late <= 0 && "text-success"
+            ]}
+          >
+            {lateness_text(@late)}
+          </span>
+        </span>
+        <span class="block text-xs text-base-content/60">{@detail}</span>
+        <span
+          :if={@note not in [nil, ""]}
+          class="mt-1 block whitespace-pre-line rounded-lg bg-accent/15 px-2 py-1 text-xs"
+        >
+          {@note}
+        </span>
+      </span>
+    </label>
+    """
+  end
+
+  defp version_detail(%{meal: m, meal_dish: d}) do
+    [
+      Calendar.strftime(m.date, "%d %b %Y"),
+      MealDish.size_text(d.size, d.size_unit),
+      "planned #{Duration.format(d.cook_minutes)}, took #{Duration.format(Meals.actual_cook(d))}"
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" · ")
+  end
+
+  defp lateness_text(0), do: "on time"
+  defp lateness_text(m) when m > 0, do: "#{Duration.format(m)} late"
+  defp lateness_text(m), do: "#{Duration.format(-m)} early"
+
+  # " · cooked 3 times, last 5.2 kg" for the picker row.
+  defp versions_text([]), do: ""
+
+  defp versions_text([%{meal_dish: last} | _] = history) do
+    times = if length(history) == 1, do: "once", else: "#{length(history)} times"
+    last = MealDish.size_text(last.size, last.size_unit)
+    " · cooked #{times}" <> if(last, do: ", last #{last}", else: "")
+  end
+
   attr :tab, :atom, required: true
   attr :meal, Meal, required: true
   attr :saved, :list, required: true
@@ -951,6 +1271,8 @@ defmodule CookingSchedulerWeb.PlanLive do
   attr :other_meals, :list, required: true
   attr :from_meal, :any, default: nil
   attr :entries, :list, required: true
+  attr :sizing, :any, default: nil
+  attr :histories, :map, default: %{}
 
   # "Add a dish": pick one from the library, or create a new one with the New dish form
   # rendered inside the modal (see ADR 0017).
@@ -1068,7 +1390,10 @@ defmodule CookingSchedulerWeb.PlanLive do
               </li>
             </ul>
           <% end %>
-          <%= if @tab == :pick do %>
+          <%= if @tab == :pick and @sizing do %>
+            <.sizing_panel sizing={@sizing} />
+          <% end %>
+          <%= if @tab == :pick and is_nil(@sizing) do %>
             <form id="saved-filter" phx-change="filter_saved" phx-submit="filter_saved" class="mb-3">
               <label class="input input-sm w-full">
                 <.icon name="hero-magnifying-glass-micro" class="size-4 opacity-50" />
@@ -1088,7 +1413,8 @@ defmodule CookingSchedulerWeb.PlanLive do
               <li :for={s <- @matching}>
                 <button
                   type="button"
-                  phx-click="add_saved"
+                  id={"saved-#{s.id}"}
+                  phx-click={if MealDish.sized?(s), do: "size_saved", else: "add_saved"}
                   phx-value-id={s.id}
                   class="group flex w-full items-center gap-3 rounded-xl border border-base-300 bg-base-100/70 px-3 py-2 text-left transition hover:border-primary/40 hover:bg-base-100"
                 >
@@ -1101,13 +1427,21 @@ defmodule CookingSchedulerWeb.PlanLive do
                   <span class="min-w-0 flex-1">
                     <span class="block truncate font-semibold">{s.name}</span>
                     <span class="block truncate text-xs text-base-content/60">
-                      {Duration.format(s.cook_minutes)} cook<span :if={s.tags != []}>
-                        · {Enum.join(s.tags, ", ")}
-                      </span>
+                      <%= if MealDish.sized?(s) do %>
+                        <.icon name="hero-scale-micro" class="size-3 -mt-0.5 inline" />
+                        {MealDish.rule_text(s)}{versions_text(Map.get(@histories, s.id, []))}
+                      <% else %>
+                        {Duration.format(s.cook_minutes)} cook
+                      <% end %>
+                      <span :if={s.tags != []}>· {Enum.join(s.tags, ", ")}</span>
                     </span>
                   </span>
                   <span class="btn btn-xs btn-primary btn-soft rounded-full opacity-70 transition group-hover:opacity-100">
-                    <.icon name="hero-plus-micro" class="size-3.5" /> Add
+                    <%= if MealDish.sized?(s) do %>
+                      Weigh <.icon name="hero-chevron-right-micro" class="size-3.5" />
+                    <% else %>
+                      <.icon name="hero-plus-micro" class="size-3.5" /> Add
+                    <% end %>
                   </span>
                 </button>
               </li>
@@ -1239,6 +1573,8 @@ defmodule CookingSchedulerWeb.PlanLive do
         other_meals={@other_meals}
         from_meal={@from_meal}
         entries={@entries}
+        sizing={@sizing}
+        histories={@histories}
       />
 
       <div
@@ -1247,14 +1583,33 @@ defmodule CookingSchedulerWeb.PlanLive do
       >
         <p class="text-base-content/60">No dishes in this meal yet. Add one above, or:</p>
         <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
-          <button
-            :for={m <- @other_meals}
-            class="btn btn-primary btn-soft rounded-full"
-            phx-click="copy_from"
-            phx-value-id={m.id}
+          <%!-- One picker, newest meal first, however many meals there are. --%>
+          <form
+            :if={@other_meals != []}
+            id="copy-from-form"
+            phx-submit="copy_from"
+            class="flex w-full max-w-lg flex-wrap items-center justify-center gap-2"
           >
-            <.icon name="hero-document-duplicate" class="size-4" /> Copy from {m.name}
-          </button>
+            <label class="relative min-w-0 flex-1 basis-56">
+              <.icon
+                name="hero-document-duplicate"
+                class="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-base-content/50"
+              />
+              <select
+                id="copy-from-meal"
+                name="id"
+                aria-label="Meal to copy the dishes from"
+                class="select w-full rounded-full pl-10"
+              >
+                <option :for={m <- @other_meals} value={m.id}>
+                  {m.name} · {Calendar.strftime(m.date, "%d %b %Y")}
+                </option>
+              </select>
+            </label>
+            <button id="copy-from" type="submit" class="btn btn-primary rounded-full">
+              Copy its dishes
+            </button>
+          </form>
           <button
             :if={@other_meals == []}
             id="start-from-last-year"

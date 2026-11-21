@@ -250,6 +250,29 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     assert has_element?(lv, ~s|#kitchen-load [id^="load-bar-"]|)
   end
 
+  test "clicking a dish on the kitchen load opens its row", %{conn: conn, path: path} do
+    {:ok, lv, _} = live(conn, path)
+    lv |> element("#start-from-last-year") |> render_click()
+
+    [id] =
+      lv
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(~s|#kitchen-load a[id^="load-bar-"]|)
+      |> Enum.take(1)
+      |> Enum.map(&(&1 |> LazyHTML.attribute("id") |> hd() |> String.replace("load-bar-", "")))
+
+    assert has_element?(lv, ~s|#load-bar-#{id}[href="#dish-card-#{id}"]|)
+    assert has_element?(lv, "#settings-#{id}.hidden")
+
+    lv |> element("#load-bar-#{id}") |> render_click()
+    refute has_element?(lv, "#settings-#{id}.hidden")
+
+    # Clicking again keeps it open rather than toggling it shut.
+    lv |> element("#load-bar-#{id}") |> render_click()
+    refute has_element?(lv, "#settings-#{id}.hidden")
+  end
+
   describe "courses and the run sheet" do
     setup %{meal: meal} do
       {:ok, main} =
@@ -377,5 +400,141 @@ defmodule CookingSchedulerWeb.PlanLiveTest do
     assert copy.name == "Roasties"
     assert [%{ingredient: %{name: "Potatoes"}}] = Meals.list_dish_ingredients(copy)
     assert has_element?(lv, "#from-meal-dishes", "Already in")
+  end
+
+  describe "sized dishes (ADR 0029)" do
+    setup do
+      {:ok, turkey} =
+        Meals.create_dish(%{
+          name: "Roast turkey",
+          method: :oven,
+          temp: 4,
+          temp_unit: :gas_mark,
+          minutes_per_size: "40m",
+          base_minutes: "20m"
+        })
+
+      # Last year's: 5 kg, cooked and noted.
+      {:ok, last} = Meals.create_meal(%{name: "Christmas 2025", date: ~D[2025-12-25]})
+      {:ok, past} = Meals.add_dish_to_meal(last, turkey, size: 5.0)
+      {:ok, past} = Meals.update_meal_dish(past, %{notes: "foil after 2h"})
+      {:ok, _} = Meals.start_cooking(past, 600)
+      {:ok, _} = Meals.finish_cooking(Meals.get_meal_dish!(past.id), 840)
+
+      {:ok, _} =
+        Meals.update_meal_dish(Meals.get_meal_dish!(past.id), %{next_time: "Rest longer"})
+
+      {:ok, _} = Meals.finish_meal(Meals.get_meal!(last.id))
+
+      %{turkey: turkey, past: past}
+    end
+
+    test "picking one asks for its weight, last year's to start with, and shows past versions",
+         %{conn: conn, meal: meal, path: path, turkey: turkey, past: past} do
+      {:ok, lv, _} = live(conn, path)
+      lv |> element("#add-dish") |> render_click()
+      assert has_element?(lv, "#saved-#{turkey.id}", "cooked once, last 5 kg")
+
+      lv |> element("#saved-#{turkey.id}") |> render_click()
+      assert has_element?(lv, "#sizing-weight[value='5']")
+      assert has_element?(lv, "#sizing-cook", "3h 40m")
+      assert has_element?(lv, "#version-#{past.id}", "Rest longer")
+      assert dishes(meal) == []
+
+      lv |> form("#sizing-form", sizing: %{weight: "6.5"}) |> render_change()
+      assert has_element?(lv, "#sizing-cook", "4h 40m")
+
+      lv
+      |> form("#sizing-form", sizing: %{weight: "6.5", from: to_string(past.id)})
+      |> render_submit()
+
+      refute has_element?(lv, "#add-dish-modal")
+
+      assert [%{size: 6.5, cook_minutes: 280, notes: "foil after 2h", dish_id: id}] =
+               dishes(meal)
+
+      assert id == turkey.id
+    end
+
+    test "a weight that isn't a number can't be added", %{conn: conn, path: path, turkey: turkey} do
+      {:ok, lv, _} = live(conn, path)
+      lv |> element("#add-dish") |> render_click()
+      lv |> element("#saved-#{turkey.id}") |> render_click()
+
+      lv |> form("#sizing-form", sizing: %{weight: "heavy"}) |> render_change()
+      assert has_element?(lv, "#add-sized[disabled]")
+      lv |> element("#sizing-back") |> render_click()
+      assert has_element?(lv, "#saved-picker")
+    end
+
+    test "changing the weight on the plan resets the cook time",
+         %{conn: conn, meal: meal, path: path, turkey: turkey} do
+      {:ok, d} = Meals.add_dish_to_meal(meal, turkey, size: 5.0)
+      {:ok, lv, _} = live(conn, path)
+
+      lv |> form("#dish-#{d.id}-form", meal_dish: %{size: "4"}) |> render_change()
+      assert %{size: 4.0, cook_minutes: 180} = Meals.get_meal_dish!(d.id)
+    end
+
+    test "a new sized dish made in the modal goes to the weight step", %{
+      conn: conn,
+      meal: meal,
+      path: path
+    } do
+      {:ok, lv, _} = live(conn, path)
+      lv |> element("#add-dish") |> render_click()
+      lv |> element("#add-tab-new") |> render_click()
+      child = find_live_child(lv, "new-dish-form")
+      child |> element("#toggle-sizing") |> render_click()
+
+      child
+      |> form("#dish-form",
+        dish: %{name: "Beef rib", temp: "6", minutes_per_size: "30m", size_unit: "kg"}
+      )
+      |> render_submit()
+
+      assert has_element?(lv, "#sizing-panel", "Beef rib")
+      assert dishes(meal) == []
+
+      lv |> form("#sizing-form", sizing: %{weight: "2"}) |> render_submit()
+      assert [%{name: "Beef rib", size: 2.0, cook_minutes: 60}] = dishes(meal)
+    end
+  end
+
+  test "an inside temperature is set on the plan and shown on the row", %{
+    conn: conn,
+    meal: meal,
+    path: path
+  } do
+    {:ok, dish} = Meals.create_dish(%{name: "Pork", method: :oven, temp: 5, temp_unit: :gas_mark})
+    {:ok, d} = Meals.add_dish_to_meal(meal, dish)
+    {:ok, lv, _} = live(conn, path)
+
+    lv
+    |> form("#dish-#{d.id}-form", meal_dish: %{done_temp: "71", done_temp_unit: "celsius"})
+    |> render_change()
+
+    assert %{done_temp: 71.0, done_temp_unit: :celsius} = Meals.get_meal_dish!(d.id)
+    assert has_element?(lv, "#dish-card-#{d.id}", "71°C · 160°F inside")
+  end
+
+  test "an empty meal copies dishes from a meal picked from one list", %{
+    conn: conn,
+    meal: meal,
+    path: path
+  } do
+    {:ok, dish} = Meals.create_dish(%{name: "Gravy", method: :ring, ring_size: :small})
+    {:ok, old} = Meals.create_meal(%{name: "Easter", date: ~D[2026-04-05]})
+    {:ok, _} = Meals.add_dish_to_meal(old, dish)
+    {:ok, older} = Meals.create_meal(%{name: "Christmas 2025", date: ~D[2025-12-25]})
+    {:ok, _} = Meals.add_dish_to_meal(older, dish)
+
+    {:ok, lv, _} = live(conn, path)
+    assert has_element?(lv, "#copy-from-meal option", "Easter")
+    assert has_element?(lv, "#copy-from-meal option", "Christmas 2025")
+
+    lv |> form("#copy-from-form", %{id: older.id}) |> render_submit()
+    assert [%{name: "Gravy"}] = dishes(meal)
+    refute has_element?(lv, "#copy-from-form")
   end
 end

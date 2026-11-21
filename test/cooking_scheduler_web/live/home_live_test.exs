@@ -3,7 +3,16 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias CookingScheduler.{Kitchen, Meals}
+  alias CookingScheduler.{Kitchen, Meals, Photos}
+
+  @png <<0x89, "PNG\r\n", 0x1A, "\n", 0, 0, 0, 13>>
+
+  defp tmp_png do
+    path = Path.join(System.tmp_dir!(), "photo-#{System.unique_integer([:positive])}.png")
+    File.write!(path, @png)
+    on_exit(fn -> File.rm(path) end)
+    path
+  end
 
   test "first visit goes to setup", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/setup"}}} = live(conn, ~p"/")
@@ -82,53 +91,130 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       assert length(Meals.list_meal_dishes(new)) == 1
     end
 
-    test "lists meals with their stats and plan/cook links for each", %{conn: conn} do
-      {:ok, a} = Meals.create_meal(%{name: "Christmas 2024", date: ~D[2024-12-25]})
-      {:ok, b} = Meals.create_meal(%{name: "Easter 2025", date: ~D[2025-04-20]})
-      {:ok, _} = Meals.add_meal_dish(a, :ring, [])
-      {:ok, _} = Meals.add_meal_dish(a, :ring, [])
+    test "the next meal is the hero; the rest coming up are rows with one stage button", %{
+      conn: conn
+    } do
+      today = Date.utc_today()
+      {:ok, soon} = Meals.create_meal(%{name: "Soon", date: Date.add(today, 2)})
+      {:ok, later} = Meals.create_meal(%{name: "Later", date: Date.add(today, 30)})
+      {:ok, _} = Meals.add_meal_dish(later, :ring, [])
+      {:ok, _} = Meals.add_meal_dish(later, :ring, [])
 
       {:ok, lv, _} = live(conn, ~p"/")
 
-      assert has_element?(lv, "#meal-#{a.id}", "2 dishes")
-      assert has_element?(lv, "#meal-#{b.id}", "0 dishes")
-
-      for m <- [a, b] do
-        assert has_element?(lv, ~s|#plan-meal-#{m.id}[href="/meals/#{m.id}/plan"]|)
-        assert has_element?(lv, ~s|#cook-meal-#{m.id}[href="/meals/#{m.id}/cook"]|)
-      end
+      assert has_element?(lv, "#next-up", "Soon")
+      refute has_element?(lv, "#upcoming #meal-#{soon.id}")
+      assert has_element?(lv, "#upcoming #meal-#{later.id}", "2 dishes")
+      assert has_element?(lv, "#upcoming #meal-#{later.id}", "Planning")
+      assert has_element?(lv, ~s|#plan-meal-#{later.id}[href="/meals/#{later.id}/plan"]|)
+      assert has_element?(lv, ~s|#cook-from-menu-#{later.id}[href="/meals/#{later.id}/cook"]|)
+      refute has_element?(lv, "#past-meals")
     end
 
-    test "a meal that's being cooked can be finished or reset from home", %{conn: conn} do
+    test "cooked meals are photo cards: how it went, plan again, latest six", %{conn: conn} do
+      past =
+        for i <- 1..7 do
+          {:ok, m} =
+            Meals.create_meal(%{name: "Dinner #{i}", date: ~D[2025-01-01] |> Date.add(i)})
+
+          {:ok, m} = Meals.finish_meal(m)
+          m
+        end
+
+      {:ok, lv, _} = live(conn, ~p"/")
+      [newest | _] = Enum.reverse(past)
+      [oldest | _] = past
+
+      assert has_element?(lv, "#past-meals #meal-#{newest.id}", "On time")
+      # No photos yet: the card asks for some.
+      assert has_element?(
+               lv,
+               ~s|#meal-photos-empty-#{newest.id}[href="/meals/#{newest.id}/summary"]|
+             )
+
+      assert has_element?(lv, ~s|#summary-meal-#{newest.id}[href="/meals/#{newest.id}/summary"]|)
+      refute has_element?(lv, "#plan-meal-#{newest.id}")
+      refute has_element?(lv, "#past-meals #meal-#{oldest.id}")
+
+      lv |> element("#toggle-past") |> render_click()
+      assert has_element?(lv, "#past-meals #meal-#{oldest.id}")
+
+      lv |> element("#plan-again-#{newest.id}") |> render_click()
+      new = Enum.find(Meals.list_meals(), &(&1.name == "Dinner 7 (copy)"))
+      assert_redirect(lv, ~p"/meals/#{new.id}/plan")
+    end
+
+    test "a past meal's photos lead its card and can be clicked through", %{conn: conn} do
+      {:ok, m} = Meals.create_meal(%{name: "Christmas", date: ~D[2025-12-25]})
+      {:ok, turkey} = Meals.create_meal_dish(m, %{name: "Turkey", method: :appliance})
+      {:ok, m} = Meals.finish_meal(m)
+
+      {:ok, table} = Photos.add_photo(m, tmp_png(), "table.png")
+      {:ok, t1} = Photos.add_photo(turkey, tmp_png(), "t1.png")
+      {:ok, t2} = Photos.add_photo(turkey, tmp_png(), "t2.png")
+      {:ok, t3} = Photos.add_photo(turkey, tmp_png(), "t3.png")
+
+      {:ok, lv, _} = live(conn, ~p"/")
+      # The meal's own photo leads, two more beside it, and a count of the rest.
+      assert has_element?(lv, "#meal-photo-#{m.id}-0 img[src='/photos/#{table.id}']")
+      assert has_element?(lv, "#meal-photo-#{m.id}-2", "+1")
+      assert has_element?(lv, "#meal-#{m.id}", "4 photos")
+      refute has_element?(lv, "#photo-viewer")
+
+      lv |> element("#meal-photo-#{m.id}-1") |> render_click()
+      assert has_element?(lv, "#photo-viewer-photo-#{t1.id}")
+      assert has_element?(lv, "#photo-viewer-caption", "Turkey")
+      assert has_element?(lv, "#photo-viewer-count", "2 / 4")
+
+      lv |> element("#photo-viewer-next") |> render_click()
+      assert has_element?(lv, "#photo-viewer-photo-#{t2.id}")
+
+      lv |> element("#photo-viewer") |> render_keydown(%{"key" => "ArrowRight"})
+      assert has_element?(lv, "#photo-viewer-photo-#{t3.id}")
+
+      # Past the end wraps round to the start.
+      lv |> element("#photo-viewer-next") |> render_click()
+      assert has_element?(lv, "#photo-viewer-photo-#{table.id}")
+      assert has_element?(lv, "#photo-viewer-caption", "The table")
+
+      lv |> element("#photo-viewer-prev") |> render_click()
+      assert has_element?(lv, "#photo-viewer-photo-#{t3.id}")
+
+      lv |> element("#photo-viewer-thumb-1") |> render_click()
+      assert has_element?(lv, "#photo-viewer-photo-#{t1.id}")
+
+      lv |> element("#photo-viewer") |> render_keydown(%{"key" => "Escape"})
+      refute has_element?(lv, "#photo-viewer")
+    end
+
+    test "a meal that's being cooked can be finished or reset from its menu", %{conn: conn} do
       {:ok, m} = Meals.create_meal(%{name: "Dinner"})
       {:ok, d} = Meals.create_meal_dish(m, %{name: "Roast", method: :appliance, cook_minutes: 60})
       {:ok, _} = Meals.start_cooking(d, 600)
 
-      {:ok, lv, html} = live(conn, ~p"/")
-      assert html =~ "Cooking now"
+      {:ok, lv, _} = live(conn, ~p"/")
+      assert has_element?(lv, "#next-up", "Dinner")
 
       confirm_dialog(lv, "finish-meal-#{m.id}")
       refute has_element?(lv, "#finish-meal-#{m.id}")
-      assert has_element?(lv, "#meal-#{m.id}", "Complete")
+      assert has_element?(lv, "#past-meals #meal-#{m.id}")
 
       confirm_dialog(lv, "reset-meal-#{m.id}")
-      refute has_element?(lv, "#reset-meal-#{m.id}")
-      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
+      refute has_element?(lv, "#past-meals")
+      assert has_element?(lv, "#back-to-planning-#{m.id}")
       assert Meals.get_meal_dish!(d.id).cook_started_at == nil
     end
 
     test "a planning meal can be moved to prepping and back", %{conn: conn} do
       {:ok, m} = Meals.create_meal(%{name: "Dinner"})
       {:ok, lv, _} = live(conn, ~p"/")
-      assert has_element?(lv, "#meal-#{m.id}", "Planning")
 
       lv |> element("#start-prepping-#{m.id}") |> render_click()
       assert_redirect(lv, ~p"/meals/#{m.id}/prep")
       assert Meals.get_meal!(m.id).status == :prepping
 
       {:ok, lv, _} = live(conn, ~p"/")
-      assert has_element?(lv, "#meal-#{m.id}", "Prepping")
-      assert has_element?(lv, "#prep-meal-#{m.id}")
+      assert has_element?(lv, "#next-prep")
       lv |> element("#back-to-planning-#{m.id}") |> render_click()
       assert Meals.get_meal!(m.id).status == :planning
     end
@@ -227,7 +313,13 @@ defmodule CookingSchedulerWeb.HomeLiveTest do
       {:ok, _} = Meals.finish_meal(Meals.get_meal!(old.id))
 
       {:ok, lv, _} = live(conn, ~p"/")
+      # Only offered once a cooked meal is chosen to start from.
+      refute has_element?(lv, "#new-meal-actual")
+      lv |> form("#new-meal-form", %{from: old.id}) |> render_change()
       assert has_element?(lv, "#new-meal-actual")
+      lv |> form("#new-meal-form", %{from: ""}) |> render_change()
+      refute has_element?(lv, "#new-meal-actual")
+      lv |> form("#new-meal-form", %{from: old.id}) |> render_change()
       # out at 11:30 for a 13:30 dinner
       assert has_element?(lv, "#last-cooked-#{Meals.get_meal_dish!(d.id).dish_id}", "2h early")
 

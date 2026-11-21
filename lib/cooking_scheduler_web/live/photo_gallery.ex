@@ -5,7 +5,9 @@ defmodule CookingSchedulerWeb.PhotoGallery do
 
       <.live_component module={PhotoGallery} id="meal-photos" owner={@meal} title="The table" />
 
-  Every DOM id inside is prefixed with `id`.
+  Every DOM id inside is prefixed with `id`. Tapping a photo sends `view_photo` (with the
+  photo's id) to the page, which opens its viewer; after an upload or delete the page gets
+  `:photos_changed`. `compact` makes a tighter grid for a dish card.
   """
   use CookingSchedulerWeb, :live_component
 
@@ -16,6 +18,7 @@ defmodule CookingSchedulerWeb.PhotoGallery do
     {:ok,
      socket
      |> assign(:error, nil)
+     |> assign(:compact, false)
      |> allow_upload(:photo,
        accept: Photos.accepted_extensions(),
        max_entries: 6,
@@ -48,6 +51,7 @@ defmodule CookingSchedulerWeb.PhotoGallery do
           {:error, _} -> "#{entry.client_name} couldn't be saved, try again"
         end
 
+      send(self(), :photos_changed)
       {:noreply, socket |> assign(:photos, Photos.list_photos(owner)) |> assign(:error, error)}
     else
       {:noreply, socket}
@@ -72,6 +76,7 @@ defmodule CookingSchedulerWeb.PhotoGallery do
       photo -> {:ok, _} = Photos.delete_photo(photo)
     end
 
+    send(self(), :photos_changed)
     {:noreply, assign(socket, :photos, Photos.list_photos(socket.assigns.owner))}
   end
 
@@ -89,21 +94,33 @@ defmodule CookingSchedulerWeb.PhotoGallery do
       <ul
         :if={@enabled}
         id={"#{@id}-grid"}
-        class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+        class={[
+          "grid",
+          (@compact && "grid-cols-4 gap-1.5") || "grid-cols-3 gap-2 sm:grid-cols-4"
+        ]}
       >
         <li
           :for={photo <- @photos}
           id={"#{@id}-photo-#{photo.id}"}
-          class="group relative aspect-square overflow-hidden rounded-2xl bg-base-content/5"
+          class={[
+            "group relative aspect-square overflow-hidden bg-base-content/5",
+            (@compact && "rounded-xl") || "rounded-2xl"
+          ]}
         >
-          <a href={~p"/photos/#{photo.id}"} target="_blank" rel="noopener" class="block size-full">
+          <button
+            type="button"
+            id={"#{@id}-view-#{photo.id}"}
+            phx-click={JS.push("view_photo", value: %{photo: photo.id})}
+            aria-label={"View #{photo.filename || "photo"}"}
+            class="block size-full"
+          >
             <img
               src={~p"/photos/#{photo.id}"}
               alt={photo.filename || "Photo"}
               loading="lazy"
               class="size-full object-cover transition duration-300 group-hover:scale-105"
             />
-          </a>
+          </button>
           <.confirm_button
             id={"#{@id}-delete-#{photo.id}"}
             title="Delete this photo?"
@@ -112,7 +129,7 @@ defmodule CookingSchedulerWeb.PhotoGallery do
             tone={:danger}
             on_confirm={JS.push("delete", value: %{id: photo.id}, target: @myself)}
             aria-label="Delete photo"
-            class="btn btn-circle btn-xs absolute right-2 top-2 border-0 bg-base-100/80 opacity-0 backdrop-blur transition hover:text-error focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+            class="btn btn-circle btn-xs absolute right-1.5 top-1.5 border-0 bg-base-100/80 opacity-0 backdrop-blur transition hover:text-error focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
           >
             <.icon name="hero-trash" class="size-4" />
           </.confirm_button>
@@ -140,9 +157,13 @@ defmodule CookingSchedulerWeb.PhotoGallery do
             <label
               for={@uploads.photo.ref}
               id={"#{@id}-add"}
-              class="flex size-full cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-base-content/20 text-sm text-base-content/60 transition hover:border-primary hover:text-primary"
+              class={[
+                "flex size-full cursor-pointer flex-col items-center justify-center gap-0.5 border-2 border-dashed border-base-content/20 text-base-content/60 transition hover:border-primary hover:text-primary",
+                (@compact && "rounded-xl text-[11px]") || "rounded-2xl text-sm"
+              ]}
             >
-              <.icon name="hero-camera" class="size-6" /> Add photos
+              <.icon name="hero-camera" class={(@compact && "size-5") || "size-6"} />
+              {if @compact, do: "Add", else: "Add photos"}
             </label>
             <.live_file_input upload={@uploads.photo} class="sr-only" />
           </.form>

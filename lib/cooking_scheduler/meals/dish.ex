@@ -13,7 +13,8 @@ defmodule CookingScheduler.Meals.Dish do
 
   # The planning values that get copied between a dish and a meal dish.
   @template ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
-               rest_minutes notes link serve_offset_minutes prep_day)a
+               rest_minutes notes link serve_offset_minutes prep_day size_unit minutes_per_size
+               base_minutes done_temp done_temp_unit)a
 
   schema "dishes" do
     field :name, :string
@@ -29,6 +30,13 @@ defmodule CookingScheduler.Meals.Dish do
     field :prep_day, Ecto.Enum, values: MealDish.prep_days(), default: :before_cooking
     field :notes, :string
     field :link, :string
+    # Sized dishes (ADR 0029): cook time = base + per × weight, the weight asked for each meal.
+    field :size_unit, Ecto.Enum, values: MealDish.size_units()
+    field :minutes_per_size, Duration
+    field :base_minutes, Duration, default: 0
+    # Done when the inside reaches this, in °C or °F (a probe reading).
+    field :done_temp, :float
+    field :done_temp_unit, Ecto.Enum, values: [:celsius, :fahrenheit]
     # Free-form labels ("protein", "veg", ...). Library-only: not copied into meals.
     field :tags, {:array, :string}, default: []
     # Form input: extra comma-separated tags, merged into `tags` on save.
@@ -56,6 +64,8 @@ defmodule CookingScheduler.Meals.Dish do
     |> unique_constraint(:name, name: :dishes_lower_name_index, message: "is already a dish")
     |> RecipeLink.validate(:link)
     |> MealDish.validate_serve_offset()
+    |> MealDish.validate_sizing()
+    |> MealDish.validate_done_temp()
     |> validate_by_method()
   end
 

@@ -2,7 +2,7 @@ defmodule CookingScheduler.MealsTest do
   use CookingScheduler.DataCase
 
   alias CookingScheduler.Meals
-  alias CookingScheduler.Meals.Dish
+  alias CookingScheduler.Meals.{Dish, MealDish}
 
   defp dish_attrs(overrides \\ %{}) do
     Map.merge(
@@ -345,6 +345,105 @@ defmodule CookingScheduler.MealsTest do
 
       assert Meals.get_meal_dish!(d.id).dish_id == nil
       assert [_] = Meals.list_meal_dishes(m)
+    end
+  end
+
+  describe "sized dishes (ADR 0029)" do
+    defp turkey(overrides \\ %{}) do
+      {:ok, dish} =
+        dish_attrs(%{name: "Roast turkey", minutes_per_size: "40m", base_minutes: "20m"})
+        |> Map.merge(overrides)
+        |> Meals.create_dish()
+
+      dish
+    end
+
+    # Cooks a meal dish and finishes its meal, so it shows in the dish's history.
+    defp cooked(meal_dish, took) do
+      {:ok, d} = Meals.start_cooking(meal_dish, 600)
+      {:ok, _} = Meals.finish_cooking(d, 600 + took)
+      {:ok, _} = Meals.finish_meal(Meals.get_meal!(meal_dish.meal_id))
+      Meals.get_meal_dish!(meal_dish.id)
+    end
+
+    test "a dish with a per-weight rule is sized, and defaults to kg" do
+      dish = turkey()
+      assert MealDish.sized?(dish)
+      assert %{size_unit: :kg, minutes_per_size: 40, base_minutes: 20} = dish
+      assert MealDish.rule_text(dish) == "40m per kg + 20m"
+      refute MealDish.sized?(elem(Meals.create_dish(dish_attrs(%{name: "Sprouts"})), 1))
+    end
+
+    test "adding with a weight works out the cook time and copies the rule" do
+      dish = turkey()
+      m = meal("Christmas", ~D[2026-12-25])
+
+      {:ok, d} = Meals.add_dish_to_meal(m, dish, size: 5.2)
+      # 20 + 40 × 5.2 = 228
+      assert %{size: 5.2, cook_minutes: 228, minutes_per_size: 40, size_unit: :kg} = d
+    end
+
+    test "a new weight resets the cook time; a typed cook time wins" do
+      {:ok, d} = Meals.add_dish_to_meal(meal("Christmas", ~D[2026-12-25]), turkey(), size: 5.0)
+
+      {:ok, d} = Meals.update_meal_dish(d, %{size: "6", cook_minutes: "3h 30m"})
+      assert %{size: 6.0, cook_minutes: 210} = d
+
+      {:ok, d} = Meals.update_meal_dish(d, %{size: "4.5"})
+      assert d.cook_minutes == 200
+
+      {:ok, d} = Meals.update_meal_dish(d, %{cook_minutes: "3h"})
+      assert %{size: 4.5, cook_minutes: 180} = d
+
+      assert {:error, cs} = Meals.update_meal_dish(d, %{size: "-1"})
+      assert errors_on(cs).size != []
+    end
+
+    test "starting from a past version copies it, with the dish's current rule" do
+      dish = turkey()
+      {:ok, past} = Meals.add_dish_to_meal(meal("Last year", ~D[2025-12-25]), dish, size: 5.0)
+      {:ok, past} = Meals.update_meal_dish(past, %{notes: "foil after 2h", temp: 5})
+      {:ok, _} = Meals.add_ingredient(past, "Butter", "100", "g")
+      {:ok, dish} = Meals.update_dish(dish, %{minutes_per_size: "45m"})
+
+      {:ok, d} =
+        Meals.add_dish_to_meal(meal("This year", ~D[2026-12-25]), dish, size: 4.0, from: past)
+
+      assert %{notes: "foil after 2h", temp: 5.0, minutes_per_size: 45, cook_minutes: 200} = d
+      assert d.dish_id == dish.id
+      assert [%{ingredient: %{name: "Butter"}}] = Meals.list_dish_ingredients(d)
+    end
+
+    test "the suggested weight is the last one cooked, in the dish's unit" do
+      dish = turkey()
+      assert Meals.suggested_size(dish, Meals.dish_history(dish)) == nil
+
+      {:ok, d} = Meals.add_dish_to_meal(meal("Last year", ~D[2025-12-25]), dish, size: 11.0)
+      {:ok, d} = Meals.update_meal_dish(d, %{size_unit: :lb})
+      cooked(d, 240)
+
+      assert Meals.suggested_size(dish, Meals.dish_history(dish)) == 4.99
+    end
+  end
+
+  describe "inside temperature" do
+    test "is °C unless said, copied into meals, and checked as a probe reading" do
+      {:ok, dish} = Meals.create_dish(dish_attrs(%{name: "Pork", done_temp: "71"}))
+      assert %{done_temp: 71.0, done_temp_unit: :celsius} = dish
+      assert MealDish.done_temp_text(dish) == "71°C · 160°F inside"
+
+      {:ok, d} = Meals.add_dish_to_meal(meal("Sunday", ~D[2026-11-22]), dish)
+      assert %{done_temp: 71.0, done_temp_unit: :celsius} = d
+
+      assert {:error, cs} = Meals.update_meal_dish(d, %{done_temp: "300"})
+      assert "should be a probe reading, like 74" in errors_on(cs).done_temp
+
+      assert {:ok, %{done_temp_unit: :fahrenheit}} =
+               Meals.update_meal_dish(d, %{done_temp: "300", done_temp_unit: "fahrenheit"})
+
+      {:ok, cleared} = Meals.update_meal_dish(d, %{done_temp: ""})
+      assert %{done_temp: nil, done_temp_unit: nil} = cleared
+      assert MealDish.done_temp_text(cleared) == nil
     end
   end
 end

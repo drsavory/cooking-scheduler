@@ -8,7 +8,7 @@ defmodule CookingScheduler.Meals do
   """
 
   import Ecto.Query
-  alias CookingScheduler.{Photos, Repo}
+  alias CookingScheduler.{Photos, Repo, UnitConversion}
 
   alias CookingScheduler.Meals.{
     MealDish,
@@ -136,7 +136,8 @@ defmodule CookingScheduler.Meals do
   end
 
   @copied ~w(name method ring_size oven_share temp temp_unit prep_minutes cook_minutes
-             rest_minutes appliance_id notes link dish_id serve_offset_minutes prep_day)a
+             rest_minutes appliance_id notes link dish_id serve_offset_minutes prep_day
+             size_unit minutes_per_size base_minutes size done_temp done_temp_unit)a
 
   @doc """
   Copies every dish from `source` into `target`: same times, temperatures, notes and
@@ -428,18 +429,63 @@ defmodule CookingScheduler.Meals do
     )
   end
 
-  @doc "Adds a copy of a dish to a meal (a `MealDish`)."
-  def add_dish_to_meal(%Meal{} = meal, %Dish{} = dish) do
-    attrs = Map.take(dish, Dish.template_fields())
+  @doc """
+  Adds a copy of a dish to a meal (a `MealDish`).
+
+  Options, for sized dishes (ADR 0029):
+
+    * `:size` - this one's weight, in the dish's unit; the cook time is worked out from it.
+    * `:from` - a past `MealDish` of this dish to start from instead of the library dish: its
+      times, temperature, notes and ingredients are copied (progress and weight aren't). The
+      cook-time rule still comes from the library dish.
+  """
+  def add_dish_to_meal(%Meal{} = meal, %Dish{} = dish, opts \\ []) do
+    {source, ingredients} =
+      case opts[:from] do
+        %MealDish{dish_id: id} = past when id == dish.id -> {past, {:meal_dish, past.id}}
+        _ -> {dish, {:dish, dish.id}}
+      end
+
+    # The cook-time rule is always the library dish's current one, so the weight is in its unit.
+    attrs =
+      source
+      |> Map.take(Dish.template_fields())
+      |> Map.merge(Map.take(dish, [:size_unit, :minutes_per_size, :base_minutes]))
+
+    # The weight sets the cook time: the copied cook time was for a different bird.
+    attrs =
+      case opts[:size] do
+        size when is_number(size) ->
+          cook = MealDish.cook_for_size(attrs, size) || attrs.cook_minutes
+          %{attrs | cook_minutes: cook} |> Map.put(:size, size)
+
+        _ ->
+          attrs
+      end
 
     with {:ok, meal_dish} <-
            %MealDish{meal_id: meal.id, dish_id: dish.id}
            |> MealDish.changeset(attrs)
            |> Repo.insert() do
-      copy_ingredients({:dish, dish.id}, {:meal_dish, meal_dish.id})
+      copy_ingredients(ingredients, {:meal_dish, meal_dish.id})
       changed(meal.id)
       {:ok, meal_dish}
     end
+  end
+
+  @doc """
+  The weight to suggest for a sized dish: the last one cooked (from `dish_history/1`), in the
+  dish's own unit, or nil if none was weighed.
+  """
+  def suggested_size(%Dish{} = dish, history) do
+    unit = dish.size_unit || :kg
+
+    Enum.find_value(history, fn %{meal_dish: d} ->
+      case d.size do
+        nil -> nil
+        size -> UnitConversion.convert!(size, d.size_unit || unit, unit, round: 2)
+      end
+    end)
   end
 
   @doc """

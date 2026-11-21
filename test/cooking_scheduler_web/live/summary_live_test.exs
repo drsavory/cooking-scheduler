@@ -136,4 +136,43 @@ defmodule CookingSchedulerWeb.SummaryLiveTest do
     # never cooked: the plan stays
     assert sprouts.cook_minutes == 10
   end
+
+  test "photos lead the page and open in the viewer, from the mosaic or a dish", %{
+    conn: conn,
+    meal: meal,
+    done: done
+  } do
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/summary")
+    refute has_element?(lv, "#summary-mosaic")
+
+    # Uploading through a gallery brings the mosaic in without a reload.
+    upload(lv, "meal-photos", "table.png", @png)
+    upload(lv, "dish-photos-#{done.id}", "turkey.png", @png)
+    [table] = Photos.list_photos(meal)
+    [turkey] = Photos.list_photos(done)
+    assert has_element?(lv, "#summary-mosaic-0 img[src='/photos/#{table.id}']")
+
+    lv |> element("#summary-mosaic-0") |> render_click()
+    assert has_element?(lv, "#photo-viewer-photo-#{table.id}")
+    lv |> element("#photo-viewer-next") |> render_click()
+    assert has_element?(lv, "#photo-viewer-photo-#{turkey.id}")
+    assert has_element?(lv, "#photo-viewer-caption", "Turkey")
+    lv |> element("#photo-viewer-close") |> render_click()
+    refute has_element?(lv, "#photo-viewer")
+
+    # Tapping a photo in a dish's gallery opens the viewer on it.
+    lv |> element("#dish-photos-#{done.id}-view-#{turkey.id}") |> render_click()
+    assert has_element?(lv, "#photo-viewer-count", "2 / 2")
+  end
+
+  test "each dish card shows its timing against the plan and its result", %{
+    conn: conn,
+    meal: meal,
+    done: done
+  } do
+    {:ok, lv, _} = live(conn, ~p"/meals/#{meal.id}/summary")
+    assert has_element?(lv, "#summary-delay")
+    assert has_element?(lv, "#actuals-#{done.id} dl", "Took")
+    assert has_element?(lv, "#actuals-#{done.id} dl", "1h")
+  end
 end

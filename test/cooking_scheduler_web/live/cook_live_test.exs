@@ -277,4 +277,12 @@ defmodule CookingSchedulerWeb.CookLiveTest do
     assert html =~ "In: Turkey (6.1 kg)"
     assert html =~ ~r/06:45.*07:00/s
   end
+
+  test "a dish with an inside temperature says so while it cooks", %{conn: conn, turkey: turkey} do
+    {:ok, turkey} = Meals.update_meal_dish(turkey, %{done_temp: "74"})
+    {:ok, _} = Meals.start_cooking(turkey, 300)
+
+    {:ok, lv, _} = live(conn, cook_path())
+    assert has_element?(lv, "#cooking-done-temp-#{turkey.id}", "74°C · 165°F inside")
+  end
 end

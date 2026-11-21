@@ -161,9 +161,12 @@ defmodule CookingScheduler.Planner do
   @doc """
   The free space in a `load/2` row between `from` and `to`, as boxes in the same units as its
   slots: `%{from, to, offset, units}`. Each box is a gap in the stack that stays open for its
-  whole time; boxes of the same gap that run on in time are merged.
+  whole time; boxes of the same gap that run on in time are merged. Rings are separate
+  burners, so a ring row gets one box per free ring rather than one across neighbours.
   """
-  def free_space(%{capacity: capacity, slots: bars}, from, to) do
+  def free_space(%{capacity: capacity, slots: bars} = row, from, to) do
+    step = if row[:kind] == :rings, do: 1, else: nil
+
     points =
       bars
       |> Enum.flat_map(&[&1.entry.cook_at, &1.entry.out_at])
@@ -192,7 +195,8 @@ defmodule CookingScheduler.Planner do
       for {lo, hi} <- gaps,
           hi > lo,
           lo < capacity,
-          do: %{from: a, to: b, offset: lo, units: min(hi, capacity) - lo}
+          {lo, hi} <- split(lo, min(hi, capacity), step),
+          do: %{from: a, to: b, offset: lo, units: hi - lo}
     end)
     |> Enum.sort_by(&{&1.offset, &1.units, &1.from})
     |> Enum.chunk_while(
@@ -215,6 +219,9 @@ defmodule CookingScheduler.Planner do
     )
     |> Enum.sort_by(&{&1.from, &1.offset})
   end
+
+  defp split(lo, hi, nil), do: [{lo, hi}]
+  defp split(lo, hi, step), do: for(o <- lo..(hi - 1)//step, do: {o, min(o + step, hi)})
 
   # Places each dish as a bar in the appliance's space: `units` tall (its oven space, or 1 for
   # one-at-a-time appliances) at the lowest `offset` that is free for its whole time on the

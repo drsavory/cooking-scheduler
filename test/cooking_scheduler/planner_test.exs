@@ -267,7 +267,9 @@ defmodule CookingScheduler.PlannerTest do
       assert row.slots |> Enum.map(&{&1.offset, &1.entry.resource.id}) |> Enum.sort() ==
                [{0, 1}, {1, 3}]
 
-      assert %{offset: 0, units: 2} = hd(Planner.free_space(row, @serve - 60, @serve))
+      # One box per free ring, not one across both.
+      assert [%{offset: 0, units: 1}, %{offset: 1, units: 1}] =
+               row |> Planner.free_space(@serve - 60, @serve) |> Enum.take(2)
     end
 
     test "rings and appliances hold one thing at a time; idle appliances have no slots" do
@@ -283,6 +285,14 @@ defmodule CookingScheduler.PlannerTest do
       assert row.kind == :rings
       assert row.capacity == 1
       assert row.peak == 1
+    end
+
+    test "idle rings of a size are free one by one" do
+      kitchen = [ring(1, :large), ring(2, :large)]
+      [row] = Planner.load([], kitchen)
+
+      assert [%{offset: 0, units: 1}, %{offset: 1, units: 1}] =
+               Planner.free_space(row, 600, 720)
     end
   end
 
